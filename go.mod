@@ -1,4 +1,4 @@
-module github.com/Laisky/go-utils/redis
+module github.com/Laisky/redis
 
 go 1.12
 
