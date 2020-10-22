@@ -11,14 +11,13 @@ import (
 	"time"
 
 	"github.com/Laisky/zap"
-	"github.com/go-redis/redis/v7"
 	"github.com/pkg/errors"
 )
 
 // GetItem get item from redis
-func GetItem(ctx context.Context, rdb *redis.Client, key string) (string, error) {
+func (u *Utils) GetItem(ctx context.Context, key string) (string, error) {
 	GetLogger().Debug("get redis item", zap.String("key", key))
-	return rdb.Get(key).Result()
+	return u.Client.Get(key).Result()
 }
 
 type getItemBlockingOption struct {
@@ -29,7 +28,7 @@ type getItemBlockingOption struct {
 type GetItemBlockingOptionFunc func(*getItemBlockingOption) error
 
 // WithGetItemBlockingDel delete after get
-func WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
+func (u *Utils) WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
 	return func(opt *getItemBlockingOption) error {
 		opt.del = del
 		return nil
@@ -39,7 +38,7 @@ func WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
 // GetItemBlocking get key blocking
 //
 // will delete key after get in default.
-func GetItemBlocking(ctx context.Context, rdb *redis.Client, dbkey string, opts ...GetItemBlockingOptionFunc) (string, error) {
+func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetItemBlockingOptionFunc) (string, error) {
 	opt := &getItemBlockingOption{
 		del: true,
 	}
@@ -56,7 +55,7 @@ func GetItemBlocking(ctx context.Context, rdb *redis.Client, dbkey string, opts 
 		default:
 		}
 
-		data, err := rdb.Get(dbkey).Result()
+		data, err := u.Client.Get(dbkey).Result()
 		if err != nil {
 			if IsNil(err) {
 				time.Sleep(WaitDBKeyDuration)
@@ -67,7 +66,7 @@ func GetItemBlocking(ctx context.Context, rdb *redis.Client, dbkey string, opts 
 		}
 
 		if opt.del {
-			if err = rdb.Del(dbkey).Err(); err != nil {
+			if err = u.Client.Del(dbkey).Err(); err != nil {
 				GetLogger().Error("del key", zap.String("dbkey", dbkey))
 			}
 		}
@@ -78,13 +77,13 @@ func GetItemBlocking(ctx context.Context, rdb *redis.Client, dbkey string, opts 
 }
 
 // SetItem set item
-func SetItem(ctx context.Context, rdb *redis.Client, key, val string, exp time.Duration) error {
+func (u *Utils) SetItem(ctx context.Context, key, val string, exp time.Duration) error {
 	GetLogger().Debug("put redis item", zap.String("key", key))
-	return rdb.Set(key, val, exp).Err()
+	return u.Client.Set(key, val, exp).Err()
 }
 
 // GetItemWithPrefix get item with prefix, return `map[key]: val`
-func GetItemWithPrefix(ctx context.Context, rdb *redis.Client, keyPrefix string) (map[string]string, error) {
+func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[string]string, error) {
 	GetLogger().Debug("get redis item with prefix", zap.String("key_prefix", keyPrefix))
 	if keyPrefix == "" {
 		return nil, fmt.Errorf("do not scan all keys")
@@ -96,7 +95,7 @@ func GetItemWithPrefix(ctx context.Context, rdb *redis.Client, keyPrefix string)
 		cursor        uint64
 	)
 	for {
-		if newKeys, cursor, err = rdb.Scan(cursor, keyPrefix+"*", ScanCount).Result(); err != nil {
+		if newKeys, cursor, err = u.Client.Scan(cursor, keyPrefix+"*", ScanCount).Result(); err != nil {
 			return nil, errors.Wrapf(err, "scan redis with key_prefix `%s`", keyPrefix)
 		}
 
@@ -111,7 +110,7 @@ func GetItemWithPrefix(ctx context.Context, rdb *redis.Client, keyPrefix string)
 		return item, nil
 	}
 
-	res, err := rdb.MGet(keys...).Result()
+	res, err := u.Client.MGet(keys...).Result()
 	if err != nil {
 		return nil, errors.Wrapf(err, "mget keys `%v`", keys)
 	}
@@ -128,7 +127,7 @@ func GetItemWithPrefix(ctx context.Context, rdb *redis.Client, keyPrefix string)
 }
 
 // LPopKeysBlocking LPop from mutiple keys
-func LPopKeysBlocking(ctx context.Context, rdb *redis.Client, keys ...string) (key, val string, err error) {
+func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val string, err error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -137,7 +136,7 @@ func LPopKeysBlocking(ctx context.Context, rdb *redis.Client, keys ...string) (k
 		}
 
 		for _, key = range keys {
-			if val, err = rdb.LPop(key).Result(); err != nil {
+			if val, err = u.Client.LPop(key).Result(); err != nil {
 				if !IsNil(err) {
 					return "", "", errors.Wrapf(err, "lpop `%v`", keys)
 				}
@@ -155,21 +154,21 @@ func LPopKeysBlocking(ctx context.Context, rdb *redis.Client, keys ...string) (k
 // RPush rpush keys and truncate its length
 //
 // default max length is 100
-func RPush(rdb *redis.Client, key string, payloads ...interface{}) (err error) {
+func (u *Utils) RPush(key string, payloads ...interface{}) (err error) {
 	var length int64
 	if rand.Intn(100) == 0 {
-		if length, err = rdb.LLen(key).Result(); err != nil {
+		if length, err = u.Client.LLen(key).Result(); err != nil {
 			return errors.Wrapf(err, "get len `%s`", key)
 		}
 	}
 
 	if length >= 100 {
-		if err = rdb.LTrim(key, -10, -1).Err(); err != nil {
+		if err = u.Client.LTrim(key, -10, -1).Err(); err != nil {
 			GetLogger().Error("trim", zap.String("key", key), zap.Error(err))
 		}
 
 		GetLogger().Info("trim array", zap.String("key", key))
 	}
 
-	return rdb.RPush(key, payloads...).Err()
+	return u.Client.RPush(key, payloads...).Err()
 }
