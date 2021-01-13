@@ -24,9 +24,12 @@ const (
 //
 //   `/rtils/sync/sema/<lock_id>/`
 //
-//   * cids/: cid -> ts, all clients
-//   * owners/: cid -> counter, all clients acquired lock
+//   * cids/: client_id -> ts, all clients
+//   * owners/: client_id -> counter, all clients acquired lock
 //   * counter:
+//
+// you can specified client_id by `WithSemaphoreClientID`.
+// will auto generate client_id by UUID4 if not set.
 //
 // Implementations:
 //
@@ -37,7 +40,7 @@ const (
 //      by `ZINTERSTORE owners 2 owners cids WEIGHTS 1 0`
 //   4. increment semaphore's counter
 //   5. add cid:counter to `owners`, get rank (smaller is better).
-// 	   1. delete from `owners` if the rank is over the limit of semaphore
+// 	   5-1. delete from `owners` if the rank is over the limit of semaphore
 //   6. add cid:timestamp to `cids`
 type Semaphore struct {
 	semaOption
@@ -88,6 +91,14 @@ func WithSemaphoreLogger(logger *gutils.LoggerType) SemaphoreOptionFunc {
 	}
 }
 
+// WithSemaphoreClientID set client id
+func WithSemaphoreClientID(clientID string) SemaphoreOptionFunc {
+	return func(mu *Semaphore) error {
+		mu.clientID = clientID
+		return nil
+	}
+}
+
 // NewSemaphore new semaphore
 func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOptionFunc) (sema *Semaphore, err error) {
 	sema = &Semaphore{
@@ -100,7 +111,6 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 		semaOption: semaOption{mutexOption{
 			heartbeatInterval: defaultSemaphoreHeartbeatInterval,
 			ttl:               defaultSemaphoreTTL,
-			clientID:          uuid.New().String(),
 		}},
 	}
 
@@ -108,6 +118,10 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 		if err = optf(sema); err != nil {
 			return nil, err
 		}
+	}
+
+	if sema.clientID == "" {
+		sema.clientID = uuid.New().String()
 	}
 
 	return

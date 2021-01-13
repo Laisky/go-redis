@@ -72,6 +72,14 @@ func WithMutexLogger(logger *gutils.LoggerType) MutexOptionFunc {
 	}
 }
 
+// WithMutexClientID set client id
+func WithMutexClientID(clientID string) MutexOptionFunc {
+	return func(mu *Mutex) error {
+		mu.clientID = clientID
+		return nil
+	}
+}
+
 // NewMutex new mutex
 func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (mu *Mutex, err error) {
 	mu = &Mutex{
@@ -81,13 +89,16 @@ func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (mu *Mutex, e
 		mutexOption: mutexOption{
 			heartbeatInterval: defaultMutexHeartbeatInterval,
 			ttl:               defaultMutexTTL,
-			clientID:          uuid.New().String(),
 		},
 	}
 	for _, optf := range opts {
 		if err = optf(mu); err != nil {
 			return nil, err
 		}
+	}
+
+	if mu.clientID == "" {
+		mu.clientID = uuid.New().String()
 	}
 
 	return
