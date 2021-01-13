@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis/v8"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -38,7 +38,7 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 		t.Fatalf("should be not ok")
 	}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	if err = ctxLock.Err(); err != nil {
 		t.Fatalf("lock released")
@@ -50,7 +50,7 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 		t.Fatalf("should be not ok")
 	}
 
-	cancel()
+	mu.Unlock(ctx)
 	if err = ctxLock.Err(); err == nil {
 		t.Fatal("ctx should exit")
 	}
@@ -75,13 +75,13 @@ func TestUtils_NewMutex_unlock(t *testing.T) {
 			t.Fatalf("not ok")
 		}
 
-		if err = mu.Unlock(); err != nil {
+		if err = mu.Unlock(ctx); err != nil {
 			t.Fatalf("not ok")
 		}
 	}
 }
 
-// BenchmarkUtils_NewMutex_unlock-8   	    2824	   2396695 ns/op	    8900 B/op	     195 allocs/op
+// BenchmarkUtils_NewMutex_unlock-8   	   35546	     32872 ns/op	     488 B/op	      10 allocs/op
 func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
 	rdb := redis.NewClient(&redis.Options{})
 	rtils := NewRedisUtils(rdb)
@@ -89,26 +89,22 @@ func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mu, err := rtils.NewMutex("laisky")
-	if err != nil {
-		b.Fatalf("%+v", err)
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		mu, err := rtils.NewMutex("laisky")
+		if err != nil {
+			b.Fatalf("%+v", err)
+		}
 
-	for i := 0; i < 10; i++ {
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				if rand.Intn(2) == 0 {
-					if _, _, err := mu.Lock(ctx); err != nil {
-						b.Fatalf("%+v", err)
-					}
-				} else {
-					if err := mu.Unlock(); err != nil {
-						b.Fatalf("not ok: %+v", err)
-					}
+		for pb.Next() {
+			if locked, _, err := mu.Lock(ctx); err != nil {
+				b.Fatalf("%+v", err)
+			} else if locked {
+				if err = mu.Unlock(ctx); err != nil {
+					b.Fatalf("%+v", err)
 				}
 			}
-		})
-	}
+		}
+	})
 }
 
 func TestUtils_NewMutex_race(t *testing.T) {
@@ -140,7 +136,7 @@ func TestUtils_NewMutex_race(t *testing.T) {
 			}
 
 			time.Sleep(time.Duration(100+rand.Intn(300)) * time.Millisecond)
-			if err := mu.Unlock(); err != nil {
+			if err := mu.Unlock(ctx); err != nil {
 				t.Fatalf("%+v", err)
 			}
 
