@@ -46,6 +46,7 @@ type Semaphore struct {
 	semaOption
 	rdb    *Utils
 	logger *gutils.LoggerType
+	cancel context.CancelFunc
 
 	// limit of semaphore
 	limit int
@@ -184,20 +185,23 @@ func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 		return false, nil, errors.WithStack(err)
 	}
 
-	lockCtx, cancel := context.WithCancel(context.Background())
-	go s.refreshLock(lockCtx, cancel)
+	lockCtx, s.cancel = context.WithCancel(context.Background())
+	go s.refreshLock(lockCtx, s.cancel)
 
 	return acquiredLock, lockCtx, nil
 }
 
 // Unlock release lock
 func (s *Semaphore) Unlock(ctx context.Context) (err error) {
-	_, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
+	if _, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
 		pp.ZRem(ctx, s.owners, s.clientID)
 		pp.ZRem(ctx, s.cids, s.clientID)
 		return nil
-	})
-	err = errors.WithStack(err)
+	}); err != nil {
+		return errors.WithStack(err)
+	}
+
+	s.cancel()
 	return
 }
 

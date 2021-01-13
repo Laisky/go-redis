@@ -61,7 +61,37 @@ func TestSemaphore_Lock(t *testing.T) {
 	} else if !locked3 {
 		t.Fatal("should  locked")
 	}
+}
 
+func TestSemaphore_race(t *testing.T) {
+	run := func(ctx context.Context, s *Semaphore) {
+		if locked, _, err := s.Lock(ctx); err != nil {
+			t.Fatalf("%+v", err)
+		} else if locked {
+			if err = s.Unlock(ctx); err != nil {
+				t.Fatalf("%+v", err)
+			}
+		}
+	}
+
+	for i := 0; i < 10; i++ {
+		go func() {
+			rdb := redis.NewClient(&redis.Options{})
+			rtils := NewRedisUtils(rdb)
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+
+			sema, err := rtils.NewSemaphore("laisky", 2)
+			if err != nil {
+				t.Fatalf("%+v", err)
+			}
+
+			for i := 0; i < 1000; i++ {
+				run(ctx, sema)
+			}
+		}()
+	}
 }
 
 func BenchmarkSemaphore(b *testing.B) {
