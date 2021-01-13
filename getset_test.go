@@ -7,7 +7,7 @@ import (
 	"time"
 
 	gutils "github.com/Laisky/go-utils"
-	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis/v8"
 )
 
 func TestGetSet(t *testing.T) {
@@ -50,7 +50,7 @@ func TestPopPush(t *testing.T) {
 	dbkey := gutils.RandomStringWithLength(20)
 
 	val := "4ij234j23l4"
-	if err := rtils.RPush(dbkey, val); err != nil {
+	if err := rtils.RPush(ctx, dbkey, val); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	if k, v, err := rtils.LPopKeysBlocking(ctx, dbkey); err != nil {

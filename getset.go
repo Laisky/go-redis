@@ -16,8 +16,8 @@ import (
 
 // GetItem get item from redis
 func (u *Utils) GetItem(ctx context.Context, key string) (string, error) {
-	GetLogger().Debug("get redis item", zap.String("key", key))
-	return u.Client.Get(key).Result()
+	u.logger.Debug("get redis item", zap.String("key", key))
+	return u.Client.Get(ctx, key).Result()
 }
 
 type getItemBlockingOption struct {
@@ -55,7 +55,7 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 		default:
 		}
 
-		data, err := u.Client.Get(dbkey).Result()
+		data, err := u.Client.Get(ctx, dbkey).Result()
 		if err != nil {
 			if IsNil(err) {
 				time.Sleep(WaitDBKeyDuration)
@@ -66,8 +66,8 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 		}
 
 		if opt.del {
-			if err = u.Client.Del(dbkey).Err(); err != nil {
-				GetLogger().Error("del key", zap.String("dbkey", dbkey))
+			if err = u.Client.Del(ctx, dbkey).Err(); err != nil {
+				u.logger.Error("del key", zap.String("dbkey", dbkey))
 			}
 		}
 
@@ -78,13 +78,13 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 
 // SetItem set item
 func (u *Utils) SetItem(ctx context.Context, key, val string, exp time.Duration) error {
-	GetLogger().Debug("put redis item", zap.String("key", key))
-	return u.Client.Set(key, val, exp).Err()
+	u.logger.Debug("put redis item", zap.String("key", key))
+	return u.Client.Set(ctx, key, val, exp).Err()
 }
 
 // GetItemWithPrefix get item with prefix, return `map[key]: val`
 func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[string]string, error) {
-	GetLogger().Debug("get redis item with prefix", zap.String("key_prefix", keyPrefix))
+	u.logger.Debug("get redis item with prefix", zap.String("key_prefix", keyPrefix))
 	if keyPrefix == "" {
 		return nil, fmt.Errorf("do not scan all keys")
 	}
@@ -95,7 +95,7 @@ func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[st
 		cursor        uint64
 	)
 	for {
-		if newKeys, cursor, err = u.Client.Scan(cursor, keyPrefix+"*", ScanCount).Result(); err != nil {
+		if newKeys, cursor, err = u.Client.Scan(ctx, cursor, keyPrefix+"*", ScanCount).Result(); err != nil {
 			return nil, errors.Wrapf(err, "scan redis with key_prefix `%s`", keyPrefix)
 		}
 
@@ -110,7 +110,7 @@ func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[st
 		return item, nil
 	}
 
-	res, err := u.Client.MGet(keys...).Result()
+	res, err := u.Client.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, errors.Wrapf(err, "mget keys `%v`", keys)
 	}
@@ -136,7 +136,7 @@ func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val 
 		}
 
 		for _, key = range keys {
-			if val, err = u.Client.LPop(key).Result(); err != nil {
+			if val, err = u.Client.LPop(ctx, key).Result(); err != nil {
 				if !IsNil(err) {
 					return "", "", errors.Wrapf(err, "lpop `%v`", keys)
 				}
@@ -154,21 +154,21 @@ func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val 
 // RPush rpush keys and truncate its length
 //
 // default max length is 100
-func (u *Utils) RPush(key string, payloads ...interface{}) (err error) {
+func (u *Utils) RPush(ctx context.Context, key string, payloads ...interface{}) (err error) {
 	var length int64
 	if rand.Intn(100) == 0 {
-		if length, err = u.Client.LLen(key).Result(); err != nil {
+		if length, err = u.Client.LLen(ctx, key).Result(); err != nil {
 			return errors.Wrapf(err, "get len `%s`", key)
 		}
 	}
 
 	if length >= 100 {
-		if err = u.Client.LTrim(key, -10, -1).Err(); err != nil {
-			GetLogger().Error("trim", zap.String("key", key), zap.Error(err))
+		if err = u.Client.LTrim(ctx, key, -10, -1).Err(); err != nil {
+			u.logger.Error("trim", zap.String("key", key), zap.Error(err))
 		}
 
-		GetLogger().Info("trim array", zap.String("key", key))
+		u.logger.Info("trim array", zap.String("key", key))
 	}
 
-	return u.Client.RPush(key, payloads...).Err()
+	return u.Client.RPush(ctx, key, payloads...).Err()
 }
