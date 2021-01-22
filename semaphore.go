@@ -9,7 +9,6 @@ import (
 	gutils "github.com/Laisky/go-utils"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
 
@@ -62,7 +61,7 @@ type Semaphore struct {
 }
 
 type semaOption struct {
-	mutexOption
+	*mutexOption
 }
 
 // SemaphoreOptionFunc options for semaphore
@@ -72,6 +71,14 @@ type SemaphoreOptionFunc func(*Semaphore) error
 func WithSemaphoreRefreshInterval(interval time.Duration) SemaphoreOptionFunc {
 	return func(mu *Semaphore) error {
 		mu.heartbeatInterval = interval
+		return nil
+	}
+}
+
+// WithSemaphoreSpinInterval set lock spin interval
+func WithSemaphoreSpinInterval(interval time.Duration) SemaphoreOptionFunc {
+	return func(mu *Semaphore) error {
+		mu.spinInterval = interval
 		return nil
 	}
 }
@@ -103,26 +110,19 @@ func WithSemaphoreClientID(clientID string) SemaphoreOptionFunc {
 // NewSemaphore new semaphore
 func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOptionFunc) (sema *Semaphore, err error) {
 	sema = &Semaphore{
-		limit:   limit,
-		rdb:     u,
-		logger:  u.logger,
-		cids:    fmt.Sprintf(DefaultKeySyncSemaphoreLocks, lockName),
-		owners:  fmt.Sprintf(DefaultKeySyncSemaphoreOwners, lockName),
-		counter: fmt.Sprintf(DefaultKeySyncSemaphoreCounter, lockName),
-		semaOption: semaOption{mutexOption{
-			heartbeatInterval: defaultSemaphoreHeartbeatInterval,
-			ttl:               defaultSemaphoreTTL,
-		}},
+		limit:      limit,
+		rdb:        u,
+		logger:     u.logger,
+		cids:       fmt.Sprintf(DefaultKeySyncSemaphoreLocks, lockName),
+		owners:     fmt.Sprintf(DefaultKeySyncSemaphoreOwners, lockName),
+		counter:    fmt.Sprintf(DefaultKeySyncSemaphoreCounter, lockName),
+		semaOption: semaOption{newMutexOption()},
 	}
 
 	for _, optf := range opts {
 		if err = optf(sema); err != nil {
 			return nil, err
 		}
-	}
-
-	if sema.clientID == "" {
-		sema.clientID = uuid.New().String()
 	}
 
 	return
@@ -134,61 +134,73 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 //   * locked == true
 //   * lockCtx is context of lock, this context will be set to done when lock is expired
 func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
-	var acquiredLock bool
-	if _, err = s.rdb.Pipelined(ctx, func(pp redis.Pipeliner) (err error) {
-		expiredAt := strconv.Itoa(int(gutils.Clock.GetUTCNow().Add(-s.ttl).Unix()))
-		pp.ZRemRangeByScore(ctx, s.cids, "-inf", expiredAt)
-		pp.ZInterStore(ctx,
-			s.owners,
-			&redis.ZStore{
-				Keys:      []string{s.owners, s.cids},
-				Weights:   []float64{1, 0},
-				Aggregate: "MAX",
-			},
-		)
-		pp.Incr(ctx, s.counter)
-
-		var cnt int64
-		if rets, err := pp.Exec(ctx); err != nil {
-			return errors.WithStack(err)
-		} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
-			return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
+	for {
+		select {
+		case <-ctx.Done():
+			return locked, lockCtx, ctx.Err()
+		default:
 		}
 
-		pp.ZAdd(ctx, s.owners, &redis.Z{
-			Member: s.clientID,
-			Score:  float64(cnt),
-		})
-		pp.ZAdd(ctx, s.cids, &redis.Z{
-			Member: s.clientID,
-			Score:  float64(float64(gutils.Clock.GetUTCNow().Unix())),
-		})
-		pp.ZRank(ctx, s.owners, s.clientID)
-		s.logger.Debug("add new client", zap.Int64("score", cnt))
+		if _, err = s.rdb.Pipelined(ctx, func(pp redis.Pipeliner) (err error) {
+			expiredAt := strconv.Itoa(int(gutils.Clock.GetUTCNow().Add(-s.ttl).Unix()))
+			pp.ZRemRangeByScore(ctx, s.cids, "-inf", expiredAt)
+			pp.ZInterStore(ctx,
+				s.owners,
+				&redis.ZStore{
+					Keys:      []string{s.owners, s.cids},
+					Weights:   []float64{1, 0},
+					Aggregate: "MAX",
+				},
+			)
+			pp.Incr(ctx, s.counter)
 
-		if rets, err := pp.Exec(ctx); err != nil {
-			return errors.WithStack(err)
-		} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
-			return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
+			var cnt int64
+			if rets, err := pp.Exec(ctx); err != nil {
+				return errors.WithStack(err)
+			} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
+				return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
+			}
+
+			pp.ZAdd(ctx, s.owners, &redis.Z{
+				Member: s.clientID,
+				Score:  float64(cnt),
+			})
+			pp.ZAdd(ctx, s.cids, &redis.Z{
+				Member: s.clientID,
+				Score:  float64(float64(gutils.Clock.GetUTCNow().Unix())),
+			})
+			pp.ZRank(ctx, s.owners, s.clientID)
+			s.logger.Debug("add new client", zap.Int64("score", cnt))
+
+			if rets, err := pp.Exec(ctx); err != nil {
+				return errors.WithStack(err)
+			} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
+				return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
+			}
+
+			if int(cnt)+1 > s.limit {
+				// failed to acquire lock
+				pp.ZRem(ctx, s.owners, s.clientID)
+				pp.ZRem(ctx, s.cids, s.clientID)
+			} else {
+				locked = true
+			}
+
+			return nil
+		}); err != nil {
+			return false, nil, errors.WithStack(err)
 		}
 
-		if int(cnt)+1 > s.limit {
-			// failed to acquire lock
-			pp.ZRem(ctx, s.owners, s.clientID)
-			pp.ZRem(ctx, s.cids, s.clientID)
-		} else {
-			acquiredLock = true
+		if !locked {
+			time.Sleep(s.spinInterval)
+			continue
 		}
 
-		return nil
-	}); err != nil {
-		return false, nil, errors.WithStack(err)
+		lockCtx, s.cancel = context.WithCancel(context.Background())
+		go s.refreshLock(lockCtx, s.cancel)
+
+		return locked, lockCtx, nil
 	}
-
-	lockCtx, s.cancel = context.WithCancel(context.Background())
-	go s.refreshLock(lockCtx, s.cancel)
-
-	return acquiredLock, lockCtx, nil
 }
 
 // Unlock release lock

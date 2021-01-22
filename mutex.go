@@ -16,12 +16,23 @@ import (
 const (
 	defaultMutexHeartbeatInterval = time.Second
 	defaultMutexTTL               = 5 * time.Second
+	defaultSpinInterval           = 100 * time.Millisecond
 )
 
 type mutexOption struct {
 	heartbeatInterval time.Duration
 	ttl               time.Duration
+	spinInterval      time.Duration
 	clientID          string
+}
+
+func newMutexOption() *mutexOption {
+	return &mutexOption{
+		ttl:               defaultMutexTTL,
+		heartbeatInterval: defaultMutexHeartbeatInterval,
+		spinInterval:      defaultSpinInterval,
+		clientID:          uuid.New().String(),
+	}
 }
 
 // Mutex distributed mutex
@@ -36,7 +47,7 @@ type mutexOption struct {
 //   2. set if not exists by `SETNX` with ttl: lock_name -> cid
 //   3. if succeeded set, auto refresh lock's ttl
 type Mutex struct {
-	mutexOption
+	*mutexOption
 	rdb    *Utils
 	logger *gutils.LoggerType
 	cancel context.CancelFunc
@@ -47,6 +58,14 @@ type Mutex struct {
 
 // MutexOptionFunc options for mutex
 type MutexOptionFunc func(*Mutex) error
+
+// WithMutexSpinInterval set lock spin interval
+func WithMutexSpinInterval(interval time.Duration) MutexOptionFunc {
+	return func(mu *Mutex) error {
+		mu.spinInterval = interval
+		return nil
+	}
+}
 
 // WithMutexRefreshInterval set lock refreshing interval
 func WithMutexRefreshInterval(interval time.Duration) MutexOptionFunc {
@@ -83,22 +102,15 @@ func WithMutexClientID(clientID string) MutexOptionFunc {
 // NewMutex new mutex
 func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (mu *Mutex, err error) {
 	mu = &Mutex{
-		logger: u.logger,
-		rdb:    u,
-		name:   fmt.Sprintf(DefaultKeySyncMutex, lockName),
-		mutexOption: mutexOption{
-			heartbeatInterval: defaultMutexHeartbeatInterval,
-			ttl:               defaultMutexTTL,
-		},
+		logger:      u.logger,
+		rdb:         u,
+		name:        fmt.Sprintf(DefaultKeySyncMutex, lockName),
+		mutexOption: newMutexOption(),
 	}
 	for _, optf := range opts {
 		if err = optf(mu); err != nil {
 			return nil, err
 		}
-	}
-
-	if mu.clientID == "" {
-		mu.clientID = uuid.New().String()
 	}
 
 	return
@@ -145,13 +157,24 @@ func (m *Mutex) refreshLock(ctx context.Context, cancel func()) {
 //   * locked == true
 //   * lockCtx is context of lock, this context will be set to done when lock is expired
 func (m *Mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
-	if locked, err = m.rdb.SetNX(ctx, m.name, m.clientID, m.ttl).Result(); err != nil || !locked {
-		return false, nil, errors.WithStack(err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return locked, lockCtx, ctx.Err()
+		default:
+		}
 
-	lockCtx, m.cancel = context.WithCancel(context.Background())
-	go m.refreshLock(lockCtx, m.cancel)
-	return true, lockCtx, nil
+		if locked, err = m.rdb.SetNX(ctx, m.name, m.clientID, m.ttl).Result(); err != nil {
+			return false, nil, errors.WithStack(err)
+		} else if !locked {
+			time.Sleep(m.spinInterval)
+			continue
+		}
+
+		lockCtx, m.cancel = context.WithCancel(context.Background())
+		go m.refreshLock(lockCtx, m.cancel)
+		return true, lockCtx, nil
+	}
 }
 
 // Unlock release lock

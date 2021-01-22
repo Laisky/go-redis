@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	gutils "github.com/Laisky/go-utils"
+	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 	"golang.org/x/sync/errgroup"
 )
@@ -114,25 +116,30 @@ func TestUtils_NewMutex_race(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mu, err := rtils.NewMutex("laisky")
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+	lockid := "laisky" + gutils.RandomStringWithLength(10)
 
 	var locked int32
 	var pool errgroup.Group
 	for i := 0; i < 10; i++ {
+		mu, err := rtils.NewMutex(lockid,
+			WithMutexSpinInterval(time.Millisecond),
+		)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+
 		pool.Go(func() error {
-			if _, _, err := mu.Lock(ctx); err != nil {
-				t.Fatalf("%+v", err)
+			if _, _, err := mu.Lock(ctx); err != nil && err != context.DeadlineExceeded {
+				logger.Panic("lock", zap.Error(err))
+				return nil
 			}
 
 			if got := atomic.AddInt32(&locked, 1); got > 1 {
-				t.Fatalf("locked %d", got)
+				logger.Panic("locked ", zap.Int32("got", got))
 			}
 
 			if got := atomic.AddInt32(&locked, -1); got < 0 {
-				t.Fatalf("locked %d", got)
+				logger.Panic("locked ", zap.Int32("got", got))
 			}
 
 			time.Sleep(time.Duration(100+rand.Intn(300)) * time.Millisecond)
