@@ -17,12 +17,14 @@ const (
 	defaultMutexHeartbeatInterval = time.Second
 	defaultMutexTTL               = 3 * time.Second
 	defaultSpinInterval           = 100 * time.Millisecond
+	defaultBlocking               = true
 )
 
 type mutexOption struct {
 	heartbeatInterval time.Duration
 	ttl               time.Duration
 	spinInterval      time.Duration
+	blocking          bool
 	clientID          string
 }
 
@@ -31,6 +33,7 @@ func newMutexOption() *mutexOption {
 		ttl:               defaultMutexTTL,
 		heartbeatInterval: defaultMutexHeartbeatInterval,
 		spinInterval:      defaultSpinInterval,
+		blocking:          defaultBlocking,
 		clientID:          uuid.New().String(),
 	}
 }
@@ -63,6 +66,14 @@ type MutexOptionFunc func(*Mutex) error
 func WithMutexSpinInterval(interval time.Duration) MutexOptionFunc {
 	return func(mu *Mutex) error {
 		mu.spinInterval = interval
+		return nil
+	}
+}
+
+// WithMutexBlockingLock set whether blocking lock
+func WithMutexBlockingLock(blocking bool) MutexOptionFunc {
+	return func(mu *Mutex) error {
+		mu.blocking = blocking
 		return nil
 	}
 }
@@ -151,7 +162,7 @@ func (m *Mutex) refreshLock(ctx context.Context, cancel func()) {
 	}
 }
 
-// Lock acquire lock
+// Lock acquire a recursive lock
 //
 // if succeed acquired lock,
 //   * locked == true
@@ -167,8 +178,21 @@ func (m *Mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 		if locked, err = m.rdb.SetNX(ctx, m.name, m.clientID, m.ttl).Result(); err != nil {
 			return false, nil, errors.WithStack(err)
 		} else if !locked {
-			time.Sleep(m.spinInterval)
-			continue
+			if val, err := m.rdb.Get(ctx, m.name).Result(); err != nil {
+				return false, nil, errors.Wrapf(err, "get `%s`", m.name)
+			} else if val != m.clientID {
+				// if val == m.clientID, means this client already acquired lock
+				if !m.blocking {
+					return false, nil, nil
+				}
+
+				time.Sleep(m.spinInterval)
+				continue
+			}
+		}
+
+		if m.cancel != nil {
+			m.cancel()
 		}
 
 		lockCtx, m.cancel = context.WithCancel(ctx)
@@ -200,6 +224,7 @@ func (m *Mutex) Unlock(ctx context.Context) error {
 		}
 
 		m.cancel()
+		m.cancel = nil
 		return
 	}, m.name))
 }

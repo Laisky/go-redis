@@ -12,10 +12,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	defaultSemaphoreHeartbeatInterval = time.Second
-	defaultSemaphoreTTL               = 5 * time.Second
-)
+// const (
+// 	defaultSemaphoreHeartbeatInterval = time.Second
+// 	defaultSemaphoreTTL               = 5 * time.Second
+// )
 
 // Semaphore distributed fair semaphore
 //
@@ -83,6 +83,14 @@ func WithSemaphoreSpinInterval(interval time.Duration) SemaphoreOptionFunc {
 	}
 }
 
+// WithSemaphoreBlockingLock set whether blocking lock
+func WithSemaphoreBlockingLock(blocking bool) SemaphoreOptionFunc {
+	return func(mu *Semaphore) error {
+		mu.blocking = blocking
+		return nil
+	}
+}
+
 // WithSemaphoreTTL set lock's expiration
 func WithSemaphoreTTL(ttl time.Duration) SemaphoreOptionFunc {
 	return func(mu *Semaphore) error {
@@ -128,7 +136,7 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 	return
 }
 
-// Lock acquire lock
+// Lock acquire a recursive lock
 //
 // if succeed acquired lock,
 //   * locked == true
@@ -192,8 +200,16 @@ func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 		}
 
 		if !locked {
+			if !s.blocking {
+				return false, nil, nil
+			}
+
 			time.Sleep(s.spinInterval)
 			continue
+		}
+
+		if s.cancel != nil {
+			s.cancel()
 		}
 
 		lockCtx, s.cancel = context.WithCancel(ctx)

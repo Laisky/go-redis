@@ -17,7 +17,7 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{})
 	rtils := NewRedisUtils(rdb)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	mu, err := rtils.NewMutex("laisky")
@@ -34,9 +34,28 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 		t.Fatalf("not ok")
 	}
 
+	// RLock
+	var ctxLockR context.Context
+	for i := 0; i < 5; i++ {
+		if ok, ctxLockR, err = mu.Lock(ctx); err != nil {
+			t.Fatalf("%+v", err)
+		} else if !ok {
+			t.Fatal("should ok")
+		}
+	}
+
+	if err = ctxLock.Err(); err != nil && err != context.Canceled {
+		t.Fatalf("%+v", err)
+	}
+
 	{
+		mu2, err := rtils.NewMutex("laisky")
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+
 		ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-		if ok, _, err = mu.Lock(ctx); err != nil {
+		if ok, _, err = mu2.Lock(ctx); err != nil {
 			if err != context.DeadlineExceeded {
 				t.Fatalf("%+v", err)
 			}
@@ -47,13 +66,13 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 	}
 
 	time.Sleep(1 * time.Second)
-	if err = ctxLock.Err(); err != nil {
+	if err = ctxLockR.Err(); err != nil {
 		t.Fatalf("lock released %+v", err)
 	}
 
 	// should released
-	time.Sleep(1 * time.Second)
-	if err = ctxLock.Err(); err == nil {
+	time.Sleep(2 * time.Second)
+	if err = ctxLockR.Err(); err == nil {
 		t.Fatalf("lock released")
 	} else if err != context.DeadlineExceeded {
 		t.Fatalf("unlnown err %+v", err)
