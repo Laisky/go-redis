@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultMutexHeartbeatInterval = time.Second
-	defaultMutexTTL               = 5 * time.Second
+	defaultMutexTTL               = 3 * time.Second
 	defaultSpinInterval           = 100 * time.Millisecond
 )
 
@@ -171,7 +171,7 @@ func (m *Mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 			continue
 		}
 
-		lockCtx, m.cancel = context.WithCancel(context.Background())
+		lockCtx, m.cancel = context.WithCancel(ctx)
 		go m.refreshLock(lockCtx, m.cancel)
 		return true, lockCtx, nil
 	}

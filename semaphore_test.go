@@ -46,11 +46,15 @@ func TestSemaphore_Lock(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	if locked3, _, err := sema3.Lock(ctx); err != nil {
-		t.Fatalf("%+v", err)
+	ctx3, cancel3 := context.WithTimeout(ctx, time.Second)
+	if locked3, _, err := sema3.Lock(ctx3); err != nil {
+		if err != context.DeadlineExceeded {
+			t.Fatalf("%+v", err)
+		}
 	} else if locked3 {
 		t.Fatal("should not locked")
 	}
+	cancel3()
 
 	if err = sema2.Unlock(ctx); err != nil {
 		t.Fatal("should not locked")

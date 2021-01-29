@@ -196,7 +196,7 @@ func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 			continue
 		}
 
-		lockCtx, s.cancel = context.WithCancel(context.Background())
+		lockCtx, s.cancel = context.WithCancel(ctx)
 		go s.refreshLock(lockCtx, s.cancel)
 
 		return locked, lockCtx, nil
