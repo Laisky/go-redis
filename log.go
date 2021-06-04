@@ -8,28 +8,20 @@ import (
 )
 
 var (
-	logMux      sync.RWMutex
-	logInternal *gutils.LoggerType
+	logMux sync.RWMutex
+	logger *gutils.LoggerType
 )
 
 func init() {
 	var err error
-	if logInternal, err = gutils.NewConsoleLoggerWithName("go-redis", gutils.LoggerLevelInfo); err != nil {
+	if logger, err = gutils.NewConsoleLoggerWithName("go-redis", gutils.LoggerLevelInfo); err != nil {
 		gutils.Logger.Panic("new logger", zap.Error(err))
 	}
 }
 
 // SetLogger set go-redis logger
-func SetLogger(logger *gutils.LoggerType) {
+func SetLogger(log *gutils.LoggerType) {
 	logMux.Lock()
-	logInternal = logger
+	logger = log
 	logMux.Unlock()
-}
-
-// GetLogger get go-redis logger
-func GetLogger() (logger *gutils.LoggerType) {
-	logMux.RLock()
-	logger = logInternal
-	logMux.RUnlock()
-	return
 }

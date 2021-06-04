@@ -16,5 +16,5 @@ const (
 
 //Pop time
 const (
-	WaitDBKeyDuration = 3 * time.Second
+	WaitDBKeyDuration = 1 * time.Second
 )
