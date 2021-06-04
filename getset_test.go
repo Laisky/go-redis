@@ -2,12 +2,14 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	gutils "github.com/Laisky/go-utils"
+	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetSet(t *testing.T) {
@@ -69,4 +71,55 @@ func TestPopPush(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 	}
+}
+
+// get item and delelte
+func TestUtils_GetItemBlockingWithDelete(t *testing.T) {
+	ctx := context.Background()
+
+	rdb := redis.NewClient(&redis.Options{})
+	rtils := NewRedisUtils(rdb)
+
+	dbkey := "/TestUtils_GetItemBlockingWithDelete"
+	go func() {
+		ctxWrite, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		for {
+			select {
+			case <-ctxWrite.Done():
+				return
+			default:
+			}
+
+			if err := rdb.Set(ctxWrite, dbkey, gutils.RandomStringWithLength(8), KeyExpImmortal).Err(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				gutils.Logger.Panic("set", zap.Error(err))
+			}
+		}
+	}()
+
+	err := rdb.Set(ctx, dbkey, gutils.RandomStringWithLength(8), KeyExpImmortal).Err()
+	require.NoError(t, err)
+
+	data, err := rtils.GetItemBlocking(ctx, dbkey)
+	require.NoError(t, err)
+	t.Logf("got: %+v", data)
+
+	data, err = rdb.Get(ctx, dbkey).Result()
+	require.NoError(t, err)
+	require.NotEqual(t, "", data)
+
+	// =====================================
+	// case: get and delete
+	// =====================================
+	err = rdb.Set(ctx, dbkey, gutils.RandomStringWithLength(8), KeyExpImmortal).Err()
+	require.NoError(t, err)
+
+	data, err = rtils.GetItemBlocking(ctx, dbkey)
+	require.NoError(t, err)
+	t.Logf("got: %+v", data)
+
+	data, err = rdb.Get(ctx, dbkey).Result()
+	require.True(t, IsNil(err))
+	require.Equal(t, "", data)
 }

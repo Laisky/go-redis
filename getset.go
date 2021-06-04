@@ -10,6 +10,8 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/Laisky/zap"
 	"github.com/pkg/errors"
 )
@@ -38,7 +40,7 @@ func (u *Utils) WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
 // GetItemBlocking get key blocking
 //
 // will delete key after get in default.
-func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetItemBlockingOptionFunc) (string, error) {
+func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetItemBlockingOptionFunc) (data string, err error) {
 	opt := &getItemBlockingOption{
 		del: true,
 	}
@@ -48,6 +50,7 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 		}
 	}
 
+	var got bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,23 +58,55 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 		default:
 		}
 
-		data, err := u.Client.Get(ctx, dbkey).Result()
-		if err != nil {
-			if IsNil(err) {
-				time.Sleep(WaitDBKeyDuration)
-				continue
+		if !opt.del {
+			if data, err = u.Client.Get(ctx, dbkey).Result(); err != nil {
+				if IsNil(err) {
+					time.Sleep(WaitDBKeyDuration)
+					continue
+				}
+
+				return "", err
 			}
 
-			return "", err
+			return data, nil
 		}
 
-		if opt.del {
-			if err = u.Client.Del(ctx, dbkey).Err(); err != nil {
-				u.logger.Error("del key", zap.String("dbkey", dbkey))
+		got = false
+		err = u.Client.Watch(ctx, func(tx *redis.Tx) (err error) {
+			if data, err = tx.Get(ctx, dbkey).Result(); err != nil {
+				return err
 			}
-		}
+			got = true
 
-		return data, nil
+			// ====================================
+			// test
+			// ====================================
+			// time.Sleep(100 * time.Millisecond)
+			// runtime.Gosched()
+			// if data2, err := u.Client.Get(ctx, dbkey).Result(); err != nil {
+			// 	return err
+			// } else {
+			// 	fmt.Println(data2)
+			// 	time.Sleep(time.Second)
+			// }
+			// ====================================
+
+			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) (err error) {
+				return p.Del(ctx, dbkey).Err()
+			})
+			if err != nil {
+				u.logger.Error("del", zap.Error(err))
+			}
+
+			return nil
+		}, dbkey)
+
+		if got {
+			return data, nil
+		} else if err != nil {
+			time.Sleep(WaitDBKeyDuration)
+			continue
+		}
 	}
 
 }

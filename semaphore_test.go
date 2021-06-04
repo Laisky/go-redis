@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	gutils "github.com/Laisky/go-utils"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 )
@@ -88,7 +89,7 @@ func TestSemaphore_race(t *testing.T) {
 
 			sema, err := rtils.NewSemaphore("laisky", 2)
 			if err != nil {
-				t.Fatalf("%+v", err)
+				gutils.Logger.Panic("new semaphore", zap.Error(err))
 			}
 
 			for i := 0; i < 1000; i++ {
@@ -117,7 +118,9 @@ func BenchmarkSemaphore(b *testing.B) {
 				logger.Panic("lock", zap.Error(err))
 				return
 			} else if locked {
-				//
+				b.Log(locked)
+				// TODO
+				// ...
 			}
 		}
 	})
