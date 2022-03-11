@@ -44,7 +44,7 @@ import (
 type Semaphore struct {
 	semaOption
 	rdb    *Utils
-	logger *gutils.LoggerType
+	logger gutils.LoggerItf
 	cancel context.CancelFunc
 
 	// limit of semaphore

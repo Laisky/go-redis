@@ -8,7 +8,7 @@ import (
 // Utils utils enhancemant for redis
 type Utils struct {
 	*redis.Client
-	logger *gutils.LoggerType
+	logger gutils.LoggerItf
 }
 
 // NewRedisUtils wrap redis client with utils

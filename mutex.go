@@ -51,7 +51,7 @@ func newMutexOption() *mutexOption {
 type Mutex struct {
 	*mutexOption
 	rdb    *Utils
-	logger *gutils.LoggerType
+	logger gutils.LoggerItf
 	cancel context.CancelFunc
 
 	// name unique lock id
