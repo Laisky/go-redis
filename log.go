@@ -9,7 +9,7 @@ import (
 
 var (
 	logMux sync.RWMutex
-	logger *gutils.LoggerType
+	logger gutils.LoggerItf
 )
 
 func init() {
@@ -20,7 +20,7 @@ func init() {
 }
 
 // SetLogger set go-redis logger
-func SetLogger(log *gutils.LoggerType) {
+func SetLogger(log gutils.LoggerItf) {
 	logMux.Lock()
 	logger = log
 	logMux.Unlock()
