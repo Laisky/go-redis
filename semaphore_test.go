@@ -69,7 +69,7 @@ func TestSemaphore_Lock(t *testing.T) {
 }
 
 func TestSemaphore_race(t *testing.T) {
-	run := func(ctx context.Context, s *Semaphore) {
+	run := func(ctx context.Context, s Semaphore) {
 		if locked, _, err := s.Lock(ctx); err != nil {
 			t.Fatalf("%+v", err)
 		} else if locked {

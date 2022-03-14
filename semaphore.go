@@ -12,12 +12,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// const (
-// 	defaultSemaphoreHeartbeatInterval = time.Second
-// 	defaultSemaphoreTTL               = 5 * time.Second
-// )
-
-// Semaphore distributed fair semaphore
+// semaphore distributed fair semaphore
 //
 // Redis keys:
 //
@@ -41,7 +36,18 @@ import (
 //   5. add cid:counter to `owners`, get rank (smaller is better).
 // 	   5-1. delete from `owners` if the rank is over the limit of semaphore
 //   6. add cid:timestamp to `cids`
-type Semaphore struct {
+type Semaphore interface {
+	// Lock acquire a recursive lock
+	//
+	// if succeed acquired lock,
+	//   * locked == true
+	//   * lockCtx is context of lock, this context will be set to done when lock is expired
+	Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error)
+	// Unlock release lock
+	Unlock(ctx context.Context) (err error)
+}
+
+type semaphore struct {
 	semaOption
 	rdb    *Utils
 	logger gutils.LoggerItf
@@ -65,11 +71,11 @@ type semaOption struct {
 }
 
 // SemaphoreOptionFunc options for semaphore
-type SemaphoreOptionFunc func(*Semaphore) error
+type SemaphoreOptionFunc func(*semaphore) error
 
 // WithSemaphoreRefreshInterval set lock refreshing interval
 func WithSemaphoreRefreshInterval(interval time.Duration) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.heartbeatInterval = interval
 		return nil
 	}
@@ -77,7 +83,7 @@ func WithSemaphoreRefreshInterval(interval time.Duration) SemaphoreOptionFunc {
 
 // WithSemaphoreSpinInterval set lock spin interval
 func WithSemaphoreSpinInterval(interval time.Duration) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.spinInterval = interval
 		return nil
 	}
@@ -85,7 +91,7 @@ func WithSemaphoreSpinInterval(interval time.Duration) SemaphoreOptionFunc {
 
 // WithSemaphoreBlockingLock set whether blocking lock
 func WithSemaphoreBlockingLock(blocking bool) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.blocking = blocking
 		return nil
 	}
@@ -93,7 +99,7 @@ func WithSemaphoreBlockingLock(blocking bool) SemaphoreOptionFunc {
 
 // WithSemaphoreTTL set lock's expiration
 func WithSemaphoreTTL(ttl time.Duration) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.ttl = ttl
 		return nil
 	}
@@ -101,7 +107,7 @@ func WithSemaphoreTTL(ttl time.Duration) SemaphoreOptionFunc {
 
 // WithSemaphoreLogger set lock's expiration
 func WithSemaphoreLogger(logger *gutils.LoggerType) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.logger = logger
 		return nil
 	}
@@ -109,31 +115,31 @@ func WithSemaphoreLogger(logger *gutils.LoggerType) SemaphoreOptionFunc {
 
 // WithSemaphoreClientID set client id
 func WithSemaphoreClientID(clientID string) SemaphoreOptionFunc {
-	return func(mu *Semaphore) error {
+	return func(mu *semaphore) error {
 		mu.clientID = clientID
 		return nil
 	}
 }
 
 // NewSemaphore new semaphore
-func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOptionFunc) (sema *Semaphore, err error) {
-	sema = &Semaphore{
+func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOptionFunc) (Semaphore, error) {
+	sema := &semaphore{
 		limit:      limit,
 		rdb:        u,
 		logger:     u.logger,
-		cids:       fmt.Sprintf(DefaultKeySyncSemaphoreLocks, lockName),
-		owners:     fmt.Sprintf(DefaultKeySyncSemaphoreOwners, lockName),
-		counter:    fmt.Sprintf(DefaultKeySyncSemaphoreCounter, lockName),
+		cids:       fmt.Sprintf(defaultKeySyncSemaphoreLocks, lockName),
+		owners:     fmt.Sprintf(defaultKeySyncSemaphoreOwners, lockName),
+		counter:    fmt.Sprintf(defaultKeySyncSemaphoreCounter, lockName),
 		semaOption: semaOption{newMutexOption()},
 	}
 
 	for _, optf := range opts {
-		if err = optf(sema); err != nil {
+		if err := optf(sema); err != nil {
 			return nil, err
 		}
 	}
 
-	return
+	return sema, nil
 }
 
 // Lock acquire a recursive lock
@@ -141,7 +147,7 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 // if succeed acquired lock,
 //   * locked == true
 //   * lockCtx is context of lock, this context will be set to done when lock is expired
-func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
+func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -220,7 +226,7 @@ func (s *Semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 }
 
 // Unlock release lock
-func (s *Semaphore) Unlock(ctx context.Context) (err error) {
+func (s *semaphore) Unlock(ctx context.Context) (err error) {
 	if _, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
 		pp.ZRem(ctx, s.owners, s.clientID)
 		pp.ZRem(ctx, s.cids, s.clientID)
@@ -233,7 +239,7 @@ func (s *Semaphore) Unlock(ctx context.Context) (err error) {
 	return
 }
 
-func (s *Semaphore) refreshLock(ctx context.Context, cancel func()) {
+func (s *semaphore) refreshLock(ctx context.Context, cancel func()) {
 	defer cancel()
 	ticker := time.NewTicker(s.heartbeatInterval)
 	defer ticker.Stop()

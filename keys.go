@@ -1,29 +1,42 @@
 package redis
 
 const (
-	// DefaultKey default prefix of key in redis
-	DefaultKey = "/rtils/"
+	// DefaultKeyPrefix default prefix of key in redis
+	DefaultKeyPrefix = "/rtils/"
+)
+
+// rank
+const (
+	// defaultKeyRank default key prefix of score rank
+	//   `/rtils/sync/rank/<rank_name>`
+	defaultKeyRank = DefaultKeyPrefix + "rank/%s/"
+
+	// defaultKeyRankMeta meta data
+	//   `/rtils/sync/rank/<rank_name>/meta`
+	// defaultKeyRankMeta = defaultKeyRank + "meta"
+	// defaultKeyRankData ranking list
+	//   `/rtils/sync/rank/<rank_name>/data/`
+	defaultKeyRankData = defaultKeyRank + "data/"
 )
 
 // sync
-
 const (
-	// DefaultKeySync default key prefix of sync
-	DefaultKeySync = DefaultKey + "sync/"
-	// DefaultKeySyncMutex default key prefix of sync mutex
+	// defaultKeySync default key prefix of sync
+	defaultKeySync = DefaultKeyPrefix + "sync/"
+	// defaultKeySyncMutex default key prefix of sync mutex
 	//   `/rtils/sync/mutex/<lock_name>`
-	DefaultKeySyncMutex = DefaultKeySync + "mutex/%s"
+	defaultKeySyncMutex = defaultKeySync + "mutex/%s"
 
 	// defaultKeySyncSemaphore default key prefix of sync semaphore
 	//   `/rtils/sync/sema/<lock_name>`
-	defaultKeySyncSemaphore = DefaultKeySync + "sema/%s"
-	// DefaultKeySyncSemaphoreLocks all semaphore locks
+	defaultKeySyncSemaphore = defaultKeySync + "sema/%s"
+	// defaultKeySyncSemaphoreLocks all semaphore locks
 	//   `/rtils/sync/sema/<lock_name>/ids/`
-	DefaultKeySyncSemaphoreLocks = defaultKeySyncSemaphore + "/ids/"
-	// DefaultKeySyncSemaphoreOwners default key prefix of sync semaphore
+	defaultKeySyncSemaphoreLocks = defaultKeySyncSemaphore + "/ids/"
+	// defaultKeySyncSemaphoreOwners default key prefix of sync semaphore
 	//   `/rtils/sync/sema/<lock_name>/owners/`
-	DefaultKeySyncSemaphoreOwners = defaultKeySyncSemaphore + "/owners/"
-	// DefaultKeySyncSemaphoreCounter default key prefix of sync semaphore
+	defaultKeySyncSemaphoreOwners = defaultKeySyncSemaphore + "/owners/"
+	// defaultKeySyncSemaphoreCounter default key prefix of sync semaphore
 	//   `/rtils/sync/sema/<lock_name>/counter`
-	DefaultKeySyncSemaphoreCounter = defaultKeySyncSemaphore + "/counter"
+	defaultKeySyncSemaphoreCounter = defaultKeySyncSemaphore + "/counter"
 )
