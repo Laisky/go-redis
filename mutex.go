@@ -37,7 +37,7 @@ func newMutexOption() *mutexOption {
 	}
 }
 
-// Mutex distributed mutex
+// mutexType distributed mutex
 //
 // Redis keys:
 //
@@ -48,7 +48,18 @@ func newMutexOption() *mutexOption {
 //   1. generate client id(cid)
 //   2. set if not exists by `SETNX` with ttl: lock_name -> cid
 //   3. if succeeded set, auto refresh lock's ttl
-type Mutex struct {
+type Mutex interface {
+	// Lock acquire a recursive lock
+	//
+	// if succeed acquired lock,
+	//   * locked == true
+	//   * lockCtx is context of lock, this context will be set to done when lock is expired
+	Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error)
+	// Unlock release lock
+	Unlock(ctx context.Context) error
+}
+
+type mutex struct {
 	*mutexOption
 	rdb    *Utils
 	logger gutils.LoggerItf
@@ -59,11 +70,11 @@ type Mutex struct {
 }
 
 // MutexOptionFunc options for mutex
-type MutexOptionFunc func(*Mutex) error
+type MutexOptionFunc func(*mutex) error
 
 // WithMutexSpinInterval set lock spin interval
 func WithMutexSpinInterval(interval time.Duration) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.spinInterval = interval
 		return nil
 	}
@@ -71,7 +82,7 @@ func WithMutexSpinInterval(interval time.Duration) MutexOptionFunc {
 
 // WithMutexBlockingLock set whether blocking lock
 func WithMutexBlockingLock(blocking bool) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.blocking = blocking
 		return nil
 	}
@@ -79,7 +90,7 @@ func WithMutexBlockingLock(blocking bool) MutexOptionFunc {
 
 // WithMutexRefreshInterval set lock refreshing interval
 func WithMutexRefreshInterval(interval time.Duration) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.heartbeatInterval = interval
 		return nil
 	}
@@ -87,7 +98,7 @@ func WithMutexRefreshInterval(interval time.Duration) MutexOptionFunc {
 
 // WithMutexTTL set lock's expiration
 func WithMutexTTL(ttl time.Duration) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.ttl = ttl
 		return nil
 	}
@@ -95,7 +106,7 @@ func WithMutexTTL(ttl time.Duration) MutexOptionFunc {
 
 // WithMutexLogger set lock's expiration
 func WithMutexLogger(logger *gutils.LoggerType) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.logger = logger
 		return nil
 	}
@@ -103,30 +114,30 @@ func WithMutexLogger(logger *gutils.LoggerType) MutexOptionFunc {
 
 // WithMutexClientID set client id
 func WithMutexClientID(clientID string) MutexOptionFunc {
-	return func(mu *Mutex) error {
+	return func(mu *mutex) error {
 		mu.clientID = clientID
 		return nil
 	}
 }
 
 // NewMutex new mutex
-func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (mu *Mutex, err error) {
-	mu = &Mutex{
+func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (Mutex, error) {
+	mu := &mutex{
 		logger:      u.logger,
 		rdb:         u,
-		name:        fmt.Sprintf(DefaultKeySyncMutex, lockName),
+		name:        fmt.Sprintf(defaultKeySyncMutex, lockName),
 		mutexOption: newMutexOption(),
 	}
 	for _, optf := range opts {
-		if err = optf(mu); err != nil {
+		if err := optf(mu); err != nil {
 			return nil, err
 		}
 	}
 
-	return
+	return mu, nil
 }
 
-func (m *Mutex) refreshLock(ctx context.Context, cancel func()) {
+func (m *mutex) refreshLock(ctx context.Context, cancel func()) {
 	defer cancel()
 	ticker := time.NewTicker(m.heartbeatInterval)
 	defer ticker.Stop()
@@ -166,7 +177,7 @@ func (m *Mutex) refreshLock(ctx context.Context, cancel func()) {
 // if succeed acquired lock,
 //   * locked == true
 //   * lockCtx is context of lock, this context will be set to done when lock is expired
-func (m *Mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
+func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,7 +212,7 @@ func (m *Mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 }
 
 // Unlock release lock
-func (m *Mutex) Unlock(ctx context.Context) error {
+func (m *mutex) Unlock(ctx context.Context) error {
 	return errors.WithStack(m.rdb.Watch(ctx, func(tx *redis.Tx) (err error) {
 		if val, err := tx.Get(ctx, m.name).Result(); err != nil {
 			if !IsNil(err) {
