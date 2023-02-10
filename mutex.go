@@ -41,13 +41,13 @@ func newMutexOption() *mutexOption {
 //
 // Redis keys:
 //
-//   `/rtils/sync/mutex/<lock_id>/<client_id>`
+//	`/rtils/sync/mutex/<lock_id>/<client_id>`
 //
 // Implementations:
 //
-//   1. generate client id(cid)
-//   2. set if not exists by `SETNX` with ttl: lock_name -> cid
-//   3. if succeeded set, auto refresh lock's ttl
+//  1. generate client id(cid)
+//  2. set if not exists by `SETNX` with ttl: lock_name -> cid
+//  3. if succeeded set, auto refresh lock's ttl
 type Mutex interface {
 	// Lock acquire a recursive lock
 	//
@@ -175,8 +175,8 @@ func (m *mutex) refreshLock(ctx context.Context, cancel func()) {
 // Lock acquire a recursive lock
 //
 // if succeed acquired lock,
-//   * locked == true
-//   * lockCtx is context of lock, this context will be set to done when lock is expired
+//   - locked == true
+//   - lockCtx is context of lock, this context will be set to done when lock is expired
 func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
 	for {
 		select {

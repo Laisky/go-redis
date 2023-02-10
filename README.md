@@ -9,12 +9,11 @@ import (
 )
 
 func main() {
-	rtils := NewRedisUtils(redis.NewClient(&redis.Options{}))
+    rtils := NewRedisUtils(redis.NewClient(&redis.Options{}))
 }
 ```
 
-
 ## Features
 
-* `getset.go`: common utils of get/set
-* `sync.go`: distributed locks
+- `getset.go`: common utils of get/set
+- `sync.go`: distributed locks

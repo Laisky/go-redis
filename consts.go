@@ -14,7 +14,7 @@ const (
 	ScanCount = 10
 )
 
-//Pop time
+// Pop time
 const (
 	WaitDBKeyDuration = 1 * time.Second
 )

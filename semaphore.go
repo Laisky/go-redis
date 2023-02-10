@@ -16,26 +16,26 @@ import (
 //
 // Redis keys:
 //
-//   `/rtils/sync/sema/<lock_id>/`
+//	`/rtils/sync/sema/<lock_id>/`
 //
-//   * cids/: client_id -> ts, all clients
-//   * owners/: client_id -> counter, all clients acquired lock
-//   * counter:
+//	* cids/: client_id -> ts, all clients
+//	* owners/: client_id -> counter, all clients acquired lock
+//	* counter:
 //
 // you can specified client_id by `WithSemaphoreClientID`.
 // will auto generate client_id by UUID4 if not set.
 //
 // Implementations:
 //
-//   1. generate client id(cid)
-//   2. delete all expired clients in `cids`,
-//      by `ZREMRANGEBYSCORE cids -inf <now - ttl>`
-//   3. delete all expired clients in `owners`,
-//      by `ZINTERSTORE owners 2 owners cids WEIGHTS 1 0`
-//   4. increment semaphore's counter
-//   5. add cid:counter to `owners`, get rank (smaller is better).
-// 	   5-1. delete from `owners` if the rank is over the limit of semaphore
-//   6. add cid:timestamp to `cids`
+//  1. generate client id(cid)
+//  2. delete all expired clients in `cids`,
+//     by `ZREMRANGEBYSCORE cids -inf <now - ttl>`
+//  3. delete all expired clients in `owners`,
+//     by `ZINTERSTORE owners 2 owners cids WEIGHTS 1 0`
+//  4. increment semaphore's counter
+//  5. add cid:counter to `owners`, get rank (smaller is better).
+//     5-1. delete from `owners` if the rank is over the limit of semaphore
+//  6. add cid:timestamp to `cids`
 type Semaphore interface {
 	// Lock acquire a recursive lock
 	//
@@ -145,8 +145,8 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 // Lock acquire a recursive lock
 //
 // if succeed acquired lock,
-//   * locked == true
-//   * lockCtx is context of lock, this context will be set to done when lock is expired
+//   - locked == true
+//   - lockCtx is context of lock, this context will be set to done when lock is expired
 func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
 	for {
 		select {
