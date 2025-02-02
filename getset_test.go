@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	gutils "github.com/Laisky/go-utils"
+	gutils "github.com/Laisky/go-utils/v5"
+	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
@@ -93,7 +94,7 @@ func TestUtils_GetItemBlockingWithDelete(t *testing.T) {
 			}
 
 			if err := rdb.Set(ctxWrite, dbkey, gutils.RandomStringWithLength(8), KeyExpImmortal).Err(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				gutils.Logger.Panic("set", zap.Error(err))
+				glog.Shared.Panic("set", zap.Error(err))
 			}
 		}
 	}()

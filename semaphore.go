@@ -6,7 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	gutils "github.com/Laisky/go-utils"
+	gutils "github.com/Laisky/go-utils/v5"
+	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
@@ -50,7 +51,7 @@ type Semaphore interface {
 type semaphore struct {
 	semaOption
 	rdb    *Utils
-	logger gutils.LoggerItf
+	logger glog.Logger
 	cancel context.CancelFunc
 
 	// limit of semaphore
@@ -106,7 +107,7 @@ func WithSemaphoreTTL(ttl time.Duration) SemaphoreOptionFunc {
 }
 
 // WithSemaphoreLogger set lock's expiration
-func WithSemaphoreLogger(logger *gutils.LoggerType) SemaphoreOptionFunc {
+func WithSemaphoreLogger(logger glog.Logger) SemaphoreOptionFunc {
 	return func(mu *semaphore) error {
 		mu.logger = logger
 		return nil

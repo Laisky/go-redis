@@ -3,24 +3,24 @@ package redis
 import (
 	"sync"
 
-	gutils "github.com/Laisky/go-utils"
+	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 )
 
 var (
 	logMux sync.RWMutex
-	logger gutils.LoggerItf
+	logger glog.Logger
 )
 
 func init() {
 	var err error
-	if logger, err = gutils.NewConsoleLoggerWithName("go-redis", gutils.LoggerLevelInfo); err != nil {
-		gutils.Logger.Panic("new logger", zap.Error(err))
+	if logger, err = glog.NewConsoleWithName("go-redis", glog.LevelInfo); err != nil {
+		glog.Shared.Panic("new logger", zap.Error(err))
 	}
 }
 
 // SetLogger set go-redis logger
-func SetLogger(log gutils.LoggerItf) {
+func SetLogger(log glog.Logger) {
 	logMux.Lock()
 	logger = log
 	logMux.Unlock()

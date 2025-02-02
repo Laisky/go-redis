@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	gutils "github.com/Laisky/go-utils"
+	gutils "github.com/Laisky/go-utils/v5"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 	"golang.org/x/sync/errgroup"

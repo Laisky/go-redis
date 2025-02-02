@@ -4,7 +4,7 @@ Some redis utils depend on <https://github.com/go-redis/redis>
 
 ```go
 import (
-    gredis "github.com/Laisky/go-redis"
+    gredis "github.com/Laisky/go-redis/v2"
     "github.com/go-redis/redis"
 )
 

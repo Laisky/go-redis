@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	gutils "github.com/Laisky/go-utils"
+	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
@@ -62,7 +62,7 @@ type Mutex interface {
 type mutex struct {
 	*mutexOption
 	rdb    *Utils
-	logger gutils.LoggerItf
+	logger glog.Logger
 	cancel context.CancelFunc
 
 	// name unique lock id
@@ -105,7 +105,7 @@ func WithMutexTTL(ttl time.Duration) MutexOptionFunc {
 }
 
 // WithMutexLogger set lock's expiration
-func WithMutexLogger(logger *gutils.LoggerType) MutexOptionFunc {
+func WithMutexLogger(logger glog.Logger) MutexOptionFunc {
 	return func(mu *mutex) error {
 		mu.logger = logger
 		return nil

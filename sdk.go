@@ -1,14 +1,14 @@
 package redis
 
 import (
-	gutils "github.com/Laisky/go-utils"
+	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/go-redis/redis/v8"
 )
 
 // Utils utils enhancemant for redis
 type Utils struct {
 	*redis.Client
-	logger gutils.LoggerItf
+	logger glog.Logger
 }
 
 // NewRedisUtils wrap redis client with utils

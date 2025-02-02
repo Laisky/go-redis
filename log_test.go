@@ -3,10 +3,10 @@ package redis
 import (
 	"testing"
 
-	gutils "github.com/Laisky/go-utils"
+	glog "github.com/Laisky/go-utils/v5/log"
 )
 
 func TestSetLogger(t *testing.T) {
-	logger := gutils.Logger.Named("test")
+	logger := glog.Shared.Named("test")
 	SetLogger(logger)
 }
