@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/Laisky/zap"
-	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 )
 
 // Rank Use the ordered set of redis to implement dynamic ranking.
@@ -59,7 +59,7 @@ func (r *rank) Set(ctx context.Context, key string, score, snapshotID int) error
 	}
 
 	v := score*r.maxSnapshotID + snapshotID
-	if err := r.rdb.ZAdd(ctx, r.dataKey, &redis.Z{Score: float64(v), Member: key}).Err(); err != nil {
+	if err := r.rdb.ZAdd(ctx, r.dataKey, redis.Z{Score: float64(v), Member: key}).Err(); err != nil {
 		return errors.Wrapf(err, "zadd %s.%s", r.dataKey, key)
 	}
 

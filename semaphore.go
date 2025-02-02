@@ -9,8 +9,8 @@ import (
 	gutils "github.com/Laisky/go-utils/v5"
 	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
-	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 )
 
 // semaphore distributed fair semaphore
@@ -176,11 +176,11 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 				return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
 			}
 
-			pp.ZAdd(ctx, s.owners, &redis.Z{
+			pp.ZAdd(ctx, s.owners, redis.Z{
 				Member: s.clientID,
 				Score:  float64(cnt),
 			})
-			pp.ZAdd(ctx, s.cids, &redis.Z{
+			pp.ZAdd(ctx, s.cids, redis.Z{
 				Member: s.clientID,
 				Score:  float64(float64(gutils.Clock.GetUTCNow().Unix())),
 			})
@@ -254,7 +254,7 @@ func (s *semaphore) refreshLock(ctx context.Context, cancel func()) {
 		case <-ticker.C:
 		}
 
-		if err := s.rdb.ZAddXX(ctx, s.cids, &redis.Z{
+		if err := s.rdb.ZAddXX(ctx, s.cids, redis.Z{
 			Member: s.clientID,
 			Score:  float64(gutils.Clock.GetUTCNow().Unix()),
 		}).Err(); err != nil {

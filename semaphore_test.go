@@ -7,7 +7,7 @@ import (
 
 	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestSemaphore_Lock(t *testing.T) {

@@ -5,9 +5,9 @@ go 1.23
 require (
 	github.com/Laisky/go-utils/v5 v5.0.0
 	github.com/Laisky/zap v1.27.1-0.20241010063010-3154c45f2a1f
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
+	github.com/redis/go-redis/v9 v9.7.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.10.0
 )
@@ -21,7 +21,7 @@ require (
 	github.com/Laisky/golang-fifo v1.0.1-0.20240403091456-fc83d5e38c0b // indirect
 	github.com/Laisky/graphql v1.0.6 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
-	github.com/cespare/xxhash/v2 v2.1.2 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
