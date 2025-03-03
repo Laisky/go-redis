@@ -8,12 +8,13 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
+	gutils "github.com/Laisky/go-utils/v5"
 	"github.com/Laisky/zap"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 )
 
 // GetItem get item from redis
@@ -29,10 +30,10 @@ type getItemBlockingOption struct {
 // GetItemBlockingOptionFunc optional arguments for GetItemBlocking
 type GetItemBlockingOptionFunc func(*getItemBlockingOption) error
 
-// WithGetItemBlockingDel delete after get
-func (u *Utils) WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
+// WithDel delete after get
+func (u *Utils) WithDel() GetItemBlockingOptionFunc {
 	return func(opt *getItemBlockingOption) error {
-		opt.del = del
+		opt.del = true
 		return nil
 	}
 }
@@ -42,15 +43,15 @@ func (u *Utils) WithGetItemBlockingDel(del bool) GetItemBlockingOptionFunc {
 // will delete key after get in default.
 func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetItemBlockingOptionFunc) (data string, err error) {
 	opt := &getItemBlockingOption{
-		del: true,
+		del: false,
 	}
+
 	for _, optf := range opts {
 		if err := optf(opt); err != nil {
 			return "", err
 		}
 	}
 
-	var got bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -61,7 +62,7 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 		if !opt.del {
 			if data, err = u.Client.Get(ctx, dbkey).Result(); err != nil {
 				if IsNil(err) {
-					time.Sleep(WaitDBKeyDuration)
+					gutils.SleepWithContext(ctx, WaitDBKeyDuration)
 					continue
 				}
 
@@ -71,44 +72,33 @@ func (u *Utils) GetItemBlocking(ctx context.Context, dbkey string, opts ...GetIt
 			return data, nil
 		}
 
-		got = false
 		err = u.Client.Watch(ctx, func(tx *redis.Tx) (err error) {
 			if data, err = tx.Get(ctx, dbkey).Result(); err != nil {
-				return err
+				return errors.Wrapf(err, "get key `%s`", dbkey)
 			}
-			got = true
-
-			// ====================================
-			// test
-			// ====================================
-			// time.Sleep(100 * time.Millisecond)
-			// runtime.Gosched()
-			// if data2, err := u.Client.Get(ctx, dbkey).Result(); err != nil {
-			// 	return err
-			// } else {
-			// 	fmt.Println(data2)
-			// 	time.Sleep(time.Second)
-			// }
-			// ====================================
 
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) (err error) {
 				return p.Del(ctx, dbkey).Err()
 			})
 			if err != nil {
-				u.logger.Error("del", zap.Error(err))
+				return errors.Wrapf(err, "del key `%s`", dbkey)
 			}
 
 			return nil
 		}, dbkey)
 
-		if got {
-			return data, nil
-		} else if err != nil {
-			time.Sleep(WaitDBKeyDuration)
+		if err != nil {
+			// If it's a transaction failure, don't log and retry immediately
+			if strings.Contains(err.Error(), "redis: transaction failed") {
+				continue
+			}
+
+			gutils.SleepWithContext(ctx, WaitDBKeyDuration)
 			continue
 		}
-	}
 
+		return data, nil
+	}
 }
 
 // SetItem set item
@@ -155,7 +145,16 @@ func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[st
 			continue
 		}
 
-		item[keys[i]] = v.(string)
+		// Convert value to string safely
+		switch val := v.(type) {
+		case string:
+			item[keys[i]] = val
+		case []byte:
+			item[keys[i]] = string(val)
+		default:
+			// Convert any other type to string representation
+			item[keys[i]] = fmt.Sprintf("%v", val)
+		}
 	}
 
 	return item, nil
@@ -166,14 +165,14 @@ func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val 
 	for {
 		select {
 		case <-ctx.Done():
-			return "", "", errors.Wrapf(ctx.Err(), "lpop `%v`", keys)
+			return key, "", errors.Wrapf(ctx.Err(), "lpop `%v`", keys)
 		default:
 		}
 
 		for _, key = range keys {
 			if val, err = u.Client.LPop(ctx, key).Result(); err != nil {
 				if !IsNil(err) {
-					return "", "", errors.Wrapf(err, "lpop `%v`", keys)
+					return key, "", errors.Wrapf(err, "lpop `%v`", keys)
 				}
 
 				continue
@@ -182,27 +181,88 @@ func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val 
 			return key, val, nil
 		}
 
-		time.Sleep(WaitDBKeyDuration)
+		gutils.SleepWithContext(ctx, WaitDBKeyDuration)
+	}
+}
+
+// RPush options
+type rpushOption struct {
+	maxLength  int64
+	trimSize   int64
+	forceCheck bool
+}
+
+// RPushOptionFunc optional arguments for RPush
+type RPushOptionFunc func(*rpushOption) error
+
+// WithMaxLength sets the maximum list length before truncating
+func (u *Utils) WithMaxLength(maxLength int64) RPushOptionFunc {
+	return func(opt *rpushOption) error {
+		if maxLength <= 0 {
+			return errors.New("maxLength must be positive")
+		}
+		opt.maxLength = maxLength
+		return nil
+	}
+}
+
+// WithTrimSize sets how many items to keep when truncating
+func (u *Utils) WithTrimSize(size int64) RPushOptionFunc {
+	return func(opt *rpushOption) error {
+		if size <= 0 {
+			return errors.New("trimSize must be positive")
+		}
+		opt.trimSize = size
+		return nil
+	}
+}
+
+// WithForceCheck forces a length check regardless of random chance
+func (u *Utils) WithForceCheck() RPushOptionFunc {
+	return func(opt *rpushOption) error {
+		opt.forceCheck = true
+		return nil
 	}
 }
 
 // RPush rpush keys and truncate its length
 //
-// default max length is 100
-func (u *Utils) RPush(ctx context.Context, key string, payloads ...interface{}) (err error) {
-	var length int64
-	if rand.Intn(100) == 0 {
-		if length, err = u.Client.LLen(ctx, key).Result(); err != nil {
-			return errors.Wrapf(err, "get len `%s`", key)
+// default max length is 100, default trim size is 10
+func (u *Utils) RPush(ctx context.Context, key string, payloads []interface{}, opts ...RPushOptionFunc) (err error) {
+	// Use default options
+	opt := &rpushOption{
+		maxLength:  100,
+		trimSize:   10,
+		forceCheck: false,
+	}
+
+	// Apply all option functions
+	for _, optFunc := range opts {
+		if err = optFunc(opt); err != nil {
+			return errors.Wrap(err, "apply RPush option")
 		}
 	}
 
-	if length >= 100 {
-		if err = u.Client.LTrim(ctx, key, -10, -1).Err(); err != nil {
-			u.logger.Error("trim", zap.String("key", key), zap.Error(err))
+	var length int64
+	if opt.forceCheck || rand.Intn(100) == 0 {
+		if length, err = u.Client.LLen(ctx, key).Result(); err != nil {
+			return errors.Wrapf(err, "get len `%s`", key)
 		}
 
-		u.logger.Info("trim array", zap.String("key", key))
+		if length >= opt.maxLength {
+			if err = u.Client.LTrim(ctx, key, -opt.trimSize, -1).Err(); err != nil {
+				u.logger.Error("trim", zap.String("key", key), zap.Error(err))
+			}
+			u.logger.Info("trim array",
+				zap.String("key", key),
+				zap.Int64("length", length),
+				zap.Int64("max_length", opt.maxLength),
+				zap.Int64("trim_size", opt.trimSize))
+		}
+	}
+
+	if len(payloads) == 0 {
+		return nil
 	}
 
 	return u.Client.RPush(ctx, key, payloads...).Err()
