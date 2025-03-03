@@ -3,13 +3,13 @@ module github.com/Laisky/go-redis/v2
 go 1.23
 
 require (
-	github.com/Laisky/go-utils/v5 v5.0.0
+	github.com/Laisky/go-utils/v5 v5.0.1-0.20250228054950-e1500acd6929
 	github.com/Laisky/zap v1.27.1-0.20241010063010-3154c45f2a1f
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/redis/go-redis/v9 v9.7.1
 	github.com/stretchr/testify v1.9.0
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.11.0
 )
 
 require (
