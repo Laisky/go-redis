@@ -211,7 +211,7 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 				return false, nil, nil
 			}
 
-			time.Sleep(s.spinInterval)
+			gutils.SleepWithContext(ctx, s.spinInterval)
 			continue
 		}
 
@@ -228,16 +228,19 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 
 // Unlock release lock
 func (s *semaphore) Unlock(ctx context.Context) (err error) {
-	if _, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
+	defer func() {
+		if s.cancel != nil {
+			s.cancel()
+			s.cancel = nil
+		}
+	}()
+
+	_, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
 		pp.ZRem(ctx, s.owners, s.clientID)
 		pp.ZRem(ctx, s.cids, s.clientID)
 		return nil
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-
-	s.cancel()
-	return
+	})
+	return errors.WithStack(err)
 }
 
 func (s *semaphore) refreshLock(ctx context.Context, cancel func()) {
