@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	gutils "github.com/Laisky/go-utils/v5"
 	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 	"github.com/google/uuid"
@@ -37,7 +38,7 @@ func newMutexOption() *mutexOption {
 	}
 }
 
-// mutexType distributed mutex
+// Mutex distributed mutex
 //
 // Redis keys:
 //
@@ -189,6 +190,10 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 			return false, nil, errors.WithStack(err)
 		} else if !locked {
 			if val, err := m.rdb.Get(ctx, m.name).Result(); err != nil {
+				if IsNil(err) { // key expired or deleted between SetNX and Get
+					continue
+				}
+
 				return false, nil, errors.Wrapf(err, "get `%s`", m.name)
 			} else if val != m.clientID {
 				// if val == m.clientID, means this client already acquired lock
@@ -196,7 +201,7 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 					return false, nil, nil
 				}
 
-				time.Sleep(m.spinInterval)
+				gutils.SleepWithContext(ctx, m.spinInterval)
 				continue
 			}
 		}
@@ -233,8 +238,11 @@ func (m *mutex) Unlock(ctx context.Context) error {
 			return errors.WithStack(err)
 		}
 
-		m.cancel()
-		m.cancel = nil
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+
 		return
 	}, m.name))
 }

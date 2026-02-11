@@ -1,0 +1,4 @@
+## 2026-02-11 - [Distributed Lock Flakiness and Context Responsiveness]
+**Vulnerability:** Distributed locks implemented with `SetNX` followed by `Get` can be flaky if the key expires or is deleted between the two operations. This causes unexpected errors and potential lock acquisition failures. Also, non-context-aware sleep in spin loops can lead to resource leaks (DoS) when contexts are cancelled.
+**Learning:** Always check for `redis.Nil` errors when performing follow-up checks after a failed `SetNX`. Use context-aware sleep functions like `gutils.SleepWithContext` to ensure goroutines exit promptly upon cancellation.
+**Prevention:** Use established patterns for distributed locks that handle transient "nil" results gracefully by retrying. Always perform nil checks on context cancel functions to prevent panics in `Unlock` methods.

@@ -211,7 +211,7 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 				return false, nil, nil
 			}
 
-			time.Sleep(s.spinInterval)
+			gutils.SleepWithContext(ctx, s.spinInterval)
 			continue
 		}
 
@@ -236,7 +236,11 @@ func (s *semaphore) Unlock(ctx context.Context) (err error) {
 		return errors.WithStack(err)
 	}
 
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+
 	return
 }
 
