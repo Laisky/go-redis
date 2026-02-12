@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	gutils "github.com/Laisky/go-utils/v5"
 	glog "github.com/Laisky/go-utils/v5/log"
 	"github.com/Laisky/zap"
 	"github.com/google/uuid"
@@ -196,7 +197,7 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 					return false, nil, nil
 				}
 
-				time.Sleep(m.spinInterval)
+				gutils.SleepWithContext(ctx, m.spinInterval)
 				continue
 			}
 		}
@@ -213,6 +214,13 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 
 // Unlock release lock
 func (m *mutex) Unlock(ctx context.Context) error {
+	defer func() {
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+	}()
+
 	return errors.WithStack(m.rdb.Watch(ctx, func(tx *redis.Tx) (err error) {
 		if val, err := tx.Get(ctx, m.name).Result(); err != nil {
 			if !IsNil(err) {
@@ -226,15 +234,10 @@ func (m *mutex) Unlock(ctx context.Context) error {
 			return nil
 		}
 
-		if _, err = tx.TxPipelined(ctx, func(pp redis.Pipeliner) error {
+		_, err = tx.TxPipelined(ctx, func(pp redis.Pipeliner) error {
 			pp.Del(ctx, m.name)
 			return nil
-		}); err != nil {
-			return errors.WithStack(err)
-		}
-
-		m.cancel()
-		m.cancel = nil
-		return
+		})
+		return errors.WithStack(err)
 	}, m.name))
 }
