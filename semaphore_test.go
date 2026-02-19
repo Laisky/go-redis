@@ -125,3 +125,20 @@ func BenchmarkSemaphore(b *testing.B) {
 		}
 	})
 }
+
+func TestSemaphore_Unlock_WithoutLock_NoPanic(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{})
+	rtils := NewRedisUtils(rdb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	sema, err := rtils.NewSemaphore("unlock-without-lock", 1)
+	if err != nil {
+		t.Fatalf("new semaphore: %+v", err)
+	}
+
+	if err = sema.Unlock(ctx); err != nil {
+		t.Fatalf("unlock without lock should not panic, got error: %+v", err)
+	}
+}

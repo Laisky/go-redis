@@ -182,6 +182,7 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 	for {
 		select {
 		case <-ctx.Done():
+			m.logger.Debug("lock canceled before acquire", zap.String("lock", m.name), zap.Error(ctx.Err()))
 			return locked, lockCtx, ctx.Err()
 		default:
 		}
@@ -190,13 +191,20 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 			return false, nil, errors.WithStack(err)
 		} else if !locked {
 			if val, err := m.rdb.Get(ctx, m.name).Result(); err != nil {
+				if IsNil(err) {
+					m.logger.Debug("lock key disappeared after failed setnx, retry", zap.String("lock", m.name))
+					continue
+				}
+
 				return false, nil, errors.Wrapf(err, "get `%s`", m.name)
 			} else if val != m.clientID {
 				// if val == m.clientID, means this client already acquired lock
 				if !m.blocking {
+					m.logger.Debug("lock busy in non-blocking mode", zap.String("lock", m.name), zap.String("owner", val))
 					return false, nil, nil
 				}
 
+				m.logger.Debug("lock busy, wait for next spin", zap.String("lock", m.name), zap.Duration("spin_interval", m.spinInterval))
 				gutils.SleepWithContext(ctx, m.spinInterval)
 				continue
 			}
@@ -215,9 +223,12 @@ func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context,
 // Unlock release lock
 func (m *mutex) Unlock(ctx context.Context) error {
 	defer func() {
-		if m.cancel != nil {
-			m.cancel()
+		cancelFn := m.cancel
+		if cancelFn != nil {
+			cancelFn()
 			m.cancel = nil
+		} else {
+			m.logger.Debug("unlock called without active lock context", zap.String("lock", m.name))
 		}
 	}()
 

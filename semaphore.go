@@ -152,6 +152,7 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 	for {
 		select {
 		case <-ctx.Done():
+			s.logger.Debug("lock canceled before acquire", zap.String("lock", s.cids), zap.Error(ctx.Err()))
 			return locked, lockCtx, ctx.Err()
 		default:
 		}
@@ -208,9 +209,11 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 
 		if !locked {
 			if !s.blocking {
+				s.logger.Debug("semaphore busy in non-blocking mode", zap.String("lock", s.cids), zap.Int("limit", s.limit))
 				return false, nil, nil
 			}
 
+			s.logger.Debug("semaphore busy, wait for next spin", zap.String("lock", s.cids), zap.Duration("spin_interval", s.spinInterval))
 			gutils.SleepWithContext(ctx, s.spinInterval)
 			continue
 		}
@@ -229,9 +232,12 @@ func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Cont
 // Unlock release lock
 func (s *semaphore) Unlock(ctx context.Context) (err error) {
 	defer func() {
-		if s.cancel != nil {
-			s.cancel()
+		cancelFn := s.cancel
+		if cancelFn != nil {
+			cancelFn()
 			s.cancel = nil
+		} else {
+			s.logger.Debug("unlock called without active lock context", zap.String("lock", s.cids))
 		}
 	}()
 

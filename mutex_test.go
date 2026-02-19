@@ -2,7 +2,9 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,44 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 )
+
+type oneShotGetNilHook struct {
+	key  string
+	done atomic.Bool
+}
+
+func (h *oneShotGetNilHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *oneShotGetNilHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *oneShotGetNilHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if !strings.EqualFold(cmd.Name(), "get") {
+			return next(ctx, cmd)
+		}
+
+		args := cmd.Args()
+		if len(args) < 2 {
+			return next(ctx, cmd)
+		}
+
+		key, ok := args[1].(string)
+		if !ok || key != h.key {
+			return next(ctx, cmd)
+		}
+
+		if h.done.CompareAndSwap(false, true) {
+			cmd.SetErr(redis.Nil)
+			return redis.Nil
+		}
+
+		return next(ctx, cmd)
+	}
+}
 
 func TestUtils_NewMutex_lock(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{})
@@ -121,6 +161,57 @@ func TestUtils_NewMutex_unlock(t *testing.T) {
 		if err = mu.Unlock(ctx); err != nil {
 			t.Fatalf("not ok")
 		}
+	}
+}
+
+func TestMutex_Lock_GetNilBetweenSetNXAndGet(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{})
+	rtils := NewRedisUtils(rdb)
+
+	lockName := "lock-getnil"
+	lockKey := fmt.Sprintf(defaultKeySyncMutex, lockName)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	t.Cleanup(func() {
+		_ = rdb.Del(context.Background(), lockKey).Err()
+	})
+
+	if err := rdb.Set(ctx, lockKey, "owner-1", 10*time.Second).Err(); err != nil {
+		t.Fatalf("prepare lock key: %+v", err)
+	}
+
+	rdb.AddHook(&oneShotGetNilHook{key: lockKey})
+
+	mu, err := rtils.NewMutex(lockName, WithMutexBlockingLock(false))
+	if err != nil {
+		t.Fatalf("new mutex: %+v", err)
+	}
+
+	locked, _, err := mu.Lock(ctx)
+	if err != nil {
+		t.Fatalf("lock should not fail on transient redis nil: %+v", err)
+	}
+
+	if locked {
+		t.Fatalf("lock should not be acquired while another owner holds it")
+	}
+}
+
+func TestMutex_Unlock_WithoutLock_NoPanic(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{})
+	rtils := NewRedisUtils(rdb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	mu, err := rtils.NewMutex("unlock-without-lock")
+	if err != nil {
+		t.Fatalf("new mutex: %+v", err)
+	}
+
+	if err = mu.Unlock(ctx); err != nil {
+		t.Fatalf("unlock without lock should not panic, got error: %+v", err)
 	}
 }
 
