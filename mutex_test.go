@@ -54,7 +54,7 @@ func (h *oneShotGetNilHook) ProcessHook(next redis.ProcessHook) redis.ProcessHoo
 }
 
 func TestUtils_NewMutex_lock(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -140,7 +140,7 @@ func TestUtils_NewMutex_lock(t *testing.T) {
 }
 
 func TestUtils_NewMutex_unlock(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -165,7 +165,7 @@ func TestUtils_NewMutex_unlock(t *testing.T) {
 }
 
 func TestMutex_Lock_GetNilBetweenSetNXAndGet(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	lockName := "lock-getnil"
@@ -199,7 +199,7 @@ func TestMutex_Lock_GetNilBetweenSetNXAndGet(t *testing.T) {
 }
 
 func TestMutex_Unlock_WithoutLock_NoPanic(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -217,7 +217,7 @@ func TestMutex_Unlock_WithoutLock_NoPanic(t *testing.T) {
 
 // BenchmarkUtils_NewMutex_unlock-8   	   35546	     32872 ns/op	     488 B/op	      10 allocs/op
 func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -242,7 +242,7 @@ func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
 }
 
 func TestUtils_NewMutex_race(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

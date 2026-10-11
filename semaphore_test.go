@@ -11,7 +11,7 @@ import (
 )
 
 func TestSemaphore_Lock(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -81,7 +81,7 @@ func TestSemaphore_race(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		go func() {
-			rdb := redis.NewClient(&redis.Options{})
+			rdb := redis.NewClient(testRedisOptions())
 			rtils := NewRedisUtils(rdb)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -101,7 +101,7 @@ func TestSemaphore_race(t *testing.T) {
 
 func BenchmarkSemaphore(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
-		rdb := redis.NewClient(&redis.Options{})
+		rdb := redis.NewClient(testRedisOptions())
 		rtils := NewRedisUtils(rdb)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
@@ -127,7 +127,7 @@ func BenchmarkSemaphore(b *testing.B) {
 }
 
 func TestSemaphore_Unlock_WithoutLock_NoPanic(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

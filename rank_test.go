@@ -13,7 +13,7 @@ import (
 )
 
 func ExampleRank() {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -33,7 +33,7 @@ func ExampleRank() {
 }
 
 func TestUtils_NewRank(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

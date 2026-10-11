@@ -9,7 +9,7 @@ import (
 )
 
 func TestMutex_Unlock_Panic(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	u := NewRedisUtils(rdb)
 
 	mu, err := u.NewMutex("test-lock")
@@ -21,7 +21,7 @@ func TestMutex_Unlock_Panic(t *testing.T) {
 }
 
 func TestSemaphore_Unlock_Panic(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	u := NewRedisUtils(rdb)
 
 	sema, err := u.NewSemaphore("test-sema", 2)
