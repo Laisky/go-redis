@@ -12,7 +12,7 @@ import (
 )
 
 func TestGetSet(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -46,7 +46,7 @@ func TestGetSet(t *testing.T) {
 func TestUtils_GetItemBlockingWithDelete(t *testing.T) {
 	ctx := context.Background()
 
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	dbkey := "/TestUtils_GetItemBlockingWithDelete"
@@ -80,7 +80,7 @@ func TestUtils_GetItemBlockingWithDelete(t *testing.T) {
 func TestUtils_GetItemWithPrefix(t *testing.T) {
 	ctx := context.Background()
 
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	// Generate a unique prefix for this test run
@@ -133,7 +133,7 @@ func TestUtils_GetItemWithPrefix(t *testing.T) {
 
 func TestUtils_RPush_Truncation(t *testing.T) {
 	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	// Generate random key for this test
@@ -178,7 +178,7 @@ func TestUtils_RPush_Truncation(t *testing.T) {
 }
 
 func TestPopPush(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -201,7 +201,7 @@ func TestPopPush(t *testing.T) {
 
 func TestUtils_LPopKeysBlocking_MultipleKeys(t *testing.T) {
 	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	// Generate random keys
@@ -238,7 +238,7 @@ func TestUtils_LPopKeysBlocking_MultipleKeys(t *testing.T) {
 }
 
 func TestUtils_ContextCancellation(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	t.Run("GetItemBlocking respects context", func(t *testing.T) {
@@ -266,7 +266,7 @@ func TestUtils_ContextCancellation(t *testing.T) {
 
 func TestUtils_GetItemWithPrefix_EdgeCases(t *testing.T) {
 	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	t.Run("handle different value types", func(t *testing.T) {
@@ -309,7 +309,7 @@ func TestUtils_GetItemWithPrefix_EdgeCases(t *testing.T) {
 
 func TestUtils_GetItemBlocking_Error(t *testing.T) {
 	ctx := context.Background()
-	rdb := redis.NewClient(&redis.Options{})
+	rdb := redis.NewClient(testRedisOptions())
 	rtils := NewRedisUtils(rdb)
 
 	t.Run("transaction failure recovery", func(t *testing.T) {
