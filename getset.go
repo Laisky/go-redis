@@ -6,7 +6,6 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -107,57 +106,12 @@ func (u *Utils) SetItem(ctx context.Context, key, val string, exp time.Duration)
 	return u.Client.Set(ctx, key, val, exp).Err()
 }
 
-// GetItemWithPrefix get item with prefix, return `map[key]: val`
+// GetItemWithPrefix reads a complete literal-prefix result within conservative
+// default key, byte, work and deadline budgets. Use GetItemWithPrefixLimited
+// for explicit trusted limits. A budget failure returns no partial result.
 func (u *Utils) GetItemWithPrefix(ctx context.Context, keyPrefix string) (map[string]string, error) {
 	u.logger.Debug("get redis item with prefix", zap.String("key_prefix", keyPrefix))
-	if keyPrefix == "" {
-		return nil, fmt.Errorf("do not scan all keys")
-	}
-
-	var (
-		err           error
-		keys, newKeys []string
-		cursor        uint64
-	)
-	for {
-		if newKeys, cursor, err = u.Client.Scan(ctx, cursor, keyPrefix+"*", ScanCount).Result(); err != nil {
-			return nil, errors.Wrapf(err, "scan redis with key_prefix `%s`", keyPrefix)
-		}
-
-		keys = append(keys, newKeys...)
-		if cursor == 0 {
-			break
-		}
-	}
-
-	item := make(map[string]string)
-	if len(keys) == 0 {
-		return item, nil
-	}
-
-	res, err := u.Client.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil, errors.Wrapf(err, "mget keys `%v`", keys)
-	}
-
-	for i, v := range res {
-		if v == nil {
-			continue
-		}
-
-		// Convert value to string safely
-		switch val := v.(type) {
-		case string:
-			item[keys[i]] = val
-		case []byte:
-			item[keys[i]] = string(val)
-		default:
-			// Convert any other type to string representation
-			item[keys[i]] = fmt.Sprintf("%v", val)
-		}
-	}
-
-	return item, nil
+	return u.GetItemWithPrefixLimited(ctx, keyPrefix, PrefixLookupLimits{})
 }
 
 // LPopKeysBlocking LPop from mutiple keys
