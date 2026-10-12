@@ -3,14 +3,13 @@ package redis
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	gutils "github.com/Laisky/go-utils/v5"
 	glog "github.com/Laisky/go-utils/v5/log"
-	"github.com/Laisky/zap"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -38,25 +37,19 @@ func newMutexOption() *mutexOption {
 	}
 }
 
-// mutexType distributed mutex
-//
-// Redis keys:
-//
-//	`/rtils/sync/mutex/<lock_id>/<client_id>`
-//
-// Implementations:
-//
-//  1. generate client id(cid)
-//  2. set if not exists by `SETNX` with ttl: lock_name -> cid
-//  3. if succeeded set, auto refresh lock's ttl
+// Mutex protects one Redis-backed lease using a unique token per logical
+// acquisition. Recursive ownership is explicit through a returned lockCtx;
+// each successful Lock must be balanced with Unlock of that exact context.
+// A parent context without an acquisition reference cannot release an active
+// lease. ClientID is retained as a configuration label, not authorization.
 type Mutex interface {
-	// Lock acquire a recursive lock
+	// Lock acquires a unique lease. Recursion requires a returned live lockCtx.
 	//
 	// if succeed acquired lock,
 	//   * locked == true
 	//   * lockCtx is context of lock, this context will be set to done when lock is expired
 	Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error)
-	// Unlock release lock
+	// Unlock releases exactly the acquisition identified by a returned lockCtx.
 	Unlock(ctx context.Context) error
 }
 
@@ -64,7 +57,7 @@ type mutex struct {
 	*mutexOption
 	rdb    *Utils
 	logger glog.Logger
-	cancel context.CancelFunc
+	active atomic.Int64
 
 	// name unique lock id
 	name string
@@ -135,120 +128,44 @@ func (u *Utils) NewMutex(lockName string, opts ...MutexOptionFunc) (Mutex, error
 		}
 	}
 
+	if err := validateLockOptions(mu.mutexOption); err != nil {
+		return nil, err
+	}
 	return mu, nil
 }
 
-func (m *mutex) refreshLock(ctx context.Context, cancel func()) {
-	defer cancel()
-	ticker := time.NewTicker(m.heartbeatInterval)
-	defer ticker.Stop()
-	defer m.logger.Debug("release key", zap.String("dbkey", m.name))
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-
-		if err := m.rdb.Watch(ctx, func(tx *redis.Tx) (err error) {
-			if val, err := tx.Get(ctx, m.name).Result(); err != nil {
-				return errors.Wrapf(err, "get key `%s`", m.name)
-			} else if val != m.clientID {
-				return errors.Errorf("another process `%s` take over this lock `%s`", val, m.name)
-			}
-
-			_, err = tx.TxPipelined(ctx, func(pp redis.Pipeliner) error {
-				pp.Expire(ctx, m.name, m.ttl)
-				return nil
-			})
-
-			err = errors.WithStack(err)
-			return
-		}, m.name); err != nil {
-			m.logger.Warn("renew lock", zap.String("dbkey", m.name), zap.Error(err))
-			return
-		}
-
-		m.logger.Debug("succeed renew lock", zap.String("lock", m.name))
+func (m *mutex) Lock(ctx context.Context) (bool, context.Context, error) {
+	if handled, lctx, err := recursiveAcquisition(ctx, m); handled {
+		return err == nil, lctx, err
 	}
-}
-
-// Lock acquire a recursive lock
-//
-// if succeed acquired lock,
-//   - locked == true
-//   - lockCtx is context of lock, this context will be set to done when lock is expired
-func (m *mutex) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
+	token := uuid.NewString()
 	for {
-		select {
-		case <-ctx.Done():
-			m.logger.Debug("lock canceled before acquire", zap.String("lock", m.name), zap.Error(ctx.Err()))
-			return locked, lockCtx, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return false, nil, err
 		}
-
-		if locked, err = m.rdb.SetNX(ctx, m.name, m.clientID, m.ttl).Result(); err != nil {
+		result, err := mutexAcquireScript.Run(ctx, m.rdb.Client, []string{m.name}, token, m.ttl.Milliseconds()).Int64()
+		if err != nil {
 			return false, nil, errors.WithStack(err)
-		} else if !locked {
-			if val, err := m.rdb.Get(ctx, m.name).Result(); err != nil {
-				if IsNil(err) {
-					m.logger.Debug("lock key disappeared after failed setnx, retry", zap.String("lock", m.name))
-					continue
-				}
-
-				return false, nil, errors.Wrapf(err, "get `%s`", m.name)
-			} else if val != m.clientID {
-				// if val == m.clientID, means this client already acquired lock
-				if !m.blocking {
-					m.logger.Debug("lock busy in non-blocking mode", zap.String("lock", m.name), zap.String("owner", val))
-					return false, nil, nil
-				}
-
-				m.logger.Debug("lock busy, wait for next spin", zap.String("lock", m.name), zap.Duration("spin_interval", m.spinInterval))
-				gutils.SleepWithContext(ctx, m.spinInterval)
-				continue
-			}
 		}
-
-		if m.cancel != nil {
-			m.cancel()
+		if result == 1 {
+			m.active.Add(1)
+			lctx := newLockLease(ctx, m, token, m.heartbeatInterval, m.renew, m.release, func() { m.active.Add(-1) })
+			return true, lctx, nil
 		}
-
-		lockCtx, m.cancel = context.WithCancel(ctx)
-		go m.refreshLock(lockCtx, m.cancel)
-		return true, lockCtx, nil
+		if !m.blocking {
+			return false, nil, nil
+		}
+		gutils.SleepWithContext(ctx, m.spinInterval)
 	}
 }
-
-// Unlock release lock
+func (m *mutex) renew(ctx context.Context, token string) (bool, error) {
+	result, err := mutexRenewScript.Run(ctx, m.rdb.Client, []string{m.name}, token, m.ttl.Milliseconds()).Int64()
+	return result == 1, err
+}
+func (m *mutex) release(ctx context.Context, token string) (bool, error) {
+	result, err := mutexReleaseScript.Run(ctx, m.rdb.Client, []string{m.name}, token).Int64()
+	return result == 1, err
+}
 func (m *mutex) Unlock(ctx context.Context) error {
-	defer func() {
-		cancelFn := m.cancel
-		if cancelFn != nil {
-			cancelFn()
-			m.cancel = nil
-		} else {
-			m.logger.Debug("unlock called without active lock context", zap.String("lock", m.name))
-		}
-	}()
-
-	return errors.WithStack(m.rdb.Watch(ctx, func(tx *redis.Tx) (err error) {
-		if val, err := tx.Get(ctx, m.name).Result(); err != nil {
-			if !IsNil(err) {
-				return errors.Wrapf(err, "get key `%s`", m.name)
-			}
-
-			m.logger.Warn("lock not exists")
-			return nil
-		} else if val != m.clientID {
-			m.logger.Warn("another process already acquired this lock")
-			return nil
-		}
-
-		_, err = tx.TxPipelined(ctx, func(pp redis.Pipeliner) error {
-			pp.Del(ctx, m.name)
-			return nil
-		})
-		return errors.WithStack(err)
-	}, m.name))
+	return releaseAcquisition(ctx, m, m.active.Load())
 }

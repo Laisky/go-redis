@@ -3,48 +3,28 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strconv"
+	"github.com/google/uuid"
+	"sync/atomic"
 	"time"
 
 	gutils "github.com/Laisky/go-utils/v5"
 	glog "github.com/Laisky/go-utils/v5/log"
-	"github.com/Laisky/zap"
 	"github.com/pkg/errors"
-	"github.com/redis/go-redis/v9"
 )
 
-// semaphore distributed fair semaphore
-//
-// Redis keys:
-//
-//	`/rtils/sync/sema/<lock_id>/`
-//
-//	* cids/: client_id -> ts, all clients
-//	* owners/: client_id -> counter, all clients acquired lock
-//	* counter:
-//
-// you can specified client_id by `WithSemaphoreClientID`.
-// will auto generate client_id by UUID4 if not set.
-//
-// Implementations:
-//
-//  1. generate client id(cid)
-//  2. delete all expired clients in `cids`,
-//     by `ZREMRANGEBYSCORE cids -inf <now - ttl>`
-//  3. delete all expired clients in `owners`,
-//     by `ZINTERSTORE owners 2 owners cids WEIGHTS 1 0`
-//  4. increment semaphore's counter
-//  5. add cid:counter to `owners`, get rank (smaller is better).
-//     5-1. delete from `owners` if the rank is over the limit of semaphore
-//  6. add cid:timestamp to `cids`
+// Semaphore bounds concurrent leases using an atomic Redis decision.
+// Expired membership is pruned, capacity checked and a distinct token inserted
+// in one script. Waiting callers retry; strict FIFO scheduling is not promised.
+// Recursion is explicit: pass a live returned lockCtx to Lock and balance every
+// successful acquisition with Unlock using its own returned context.
 type Semaphore interface {
-	// Lock acquire a recursive lock
+	// Lock acquires a distinct permit. Recursion requires a returned live lockCtx.
 	//
 	// if succeed acquired lock,
 	//   * locked == true
 	//   * lockCtx is context of lock, this context will be set to done when lock is expired
 	Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error)
-	// Unlock release lock
+	// Unlock releases exactly the acquisition identified by a returned lockCtx.
 	Unlock(ctx context.Context) (err error)
 }
 
@@ -52,7 +32,7 @@ type semaphore struct {
 	semaOption
 	rdb    *Utils
 	logger glog.Logger
-	cancel context.CancelFunc
+	active atomic.Int64
 
 	// limit of semaphore
 	limit int
@@ -140,142 +120,47 @@ func (u *Utils) NewSemaphore(lockName string, limit int, opts ...SemaphoreOption
 		}
 	}
 
+	if limit <= 0 {
+		return nil, fmt.Errorf("semaphore limit must be positive")
+	}
+	if err := validateLockOptions(sema.mutexOption); err != nil {
+		return nil, err
+	}
 	return sema, nil
 }
 
-// Lock acquire a recursive lock
-//
-// if succeed acquired lock,
-//   - locked == true
-//   - lockCtx is context of lock, this context will be set to done when lock is expired
-func (s *semaphore) Lock(ctx context.Context) (locked bool, lockCtx context.Context, err error) {
+func (s *semaphore) Lock(ctx context.Context) (bool, context.Context, error) {
+	if handled, lctx, err := recursiveAcquisition(ctx, s); handled {
+		return err == nil, lctx, err
+	}
+	token := uuid.NewString()
 	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Debug("lock canceled before acquire", zap.String("lock", s.cids), zap.Error(ctx.Err()))
-			return locked, lockCtx, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return false, nil, err
 		}
-
-		if _, err = s.rdb.Pipelined(ctx, func(pp redis.Pipeliner) (err error) {
-			expiredAt := strconv.Itoa(int(gutils.Clock.GetUTCNow().Add(-s.ttl).Unix()))
-			pp.ZRemRangeByScore(ctx, s.cids, "-inf", expiredAt)
-			pp.ZInterStore(ctx,
-				s.owners,
-				&redis.ZStore{
-					Keys:      []string{s.owners, s.cids},
-					Weights:   []float64{1, 0},
-					Aggregate: "MAX",
-				},
-			)
-			pp.Incr(ctx, s.counter)
-
-			var cnt int64
-			if rets, err := pp.Exec(ctx); err != nil {
-				return errors.WithStack(err)
-			} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
-				return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
-			}
-
-			pp.ZAdd(ctx, s.owners, redis.Z{
-				Member: s.clientID,
-				Score:  float64(cnt),
-			})
-			pp.ZAdd(ctx, s.cids, redis.Z{
-				Member: s.clientID,
-				Score:  float64(float64(gutils.Clock.GetUTCNow().Unix())),
-			})
-			pp.ZRank(ctx, s.owners, s.clientID)
-			s.logger.Debug("add new client", zap.Int64("score", cnt))
-
-			if rets, err := pp.Exec(ctx); err != nil {
-				return errors.WithStack(err)
-			} else if cnt, err = rets[len(rets)-1].(*redis.IntCmd).Result(); err != nil {
-				return errors.Wrapf(err, "get counter `%s`", rets[len(rets)-1].String())
-			}
-
-			if int(cnt)+1 > s.limit {
-				// failed to acquire lock
-				pp.ZRem(ctx, s.owners, s.clientID)
-				pp.ZRem(ctx, s.cids, s.clientID)
-			} else {
-				locked = true
-			}
-
-			return nil
-		}); err != nil {
+		result, err := semaphoreAcquireScript.Run(ctx, s.rdb.Client, []string{s.cids, s.owners, s.counter}, token, s.ttl.Seconds(), s.limit).Int64()
+		if err != nil {
 			return false, nil, errors.WithStack(err)
 		}
-
-		if !locked {
-			if !s.blocking {
-				s.logger.Debug("semaphore busy in non-blocking mode", zap.String("lock", s.cids), zap.Int("limit", s.limit))
-				return false, nil, nil
-			}
-
-			s.logger.Debug("semaphore busy, wait for next spin", zap.String("lock", s.cids), zap.Duration("spin_interval", s.spinInterval))
-			gutils.SleepWithContext(ctx, s.spinInterval)
-			continue
+		if result == 1 {
+			s.active.Add(1)
+			lctx := newLockLease(ctx, s, token, s.heartbeatInterval, s.renew, s.release, func() { s.active.Add(-1) })
+			return true, lctx, nil
 		}
-
-		if s.cancel != nil {
-			s.cancel()
+		if !s.blocking {
+			return false, nil, nil
 		}
-
-		lockCtx, s.cancel = context.WithCancel(ctx)
-		go s.refreshLock(lockCtx, s.cancel)
-
-		return locked, lockCtx, nil
+		gutils.SleepWithContext(ctx, s.spinInterval)
 	}
 }
-
-// Unlock release lock
-func (s *semaphore) Unlock(ctx context.Context) (err error) {
-	defer func() {
-		cancelFn := s.cancel
-		if cancelFn != nil {
-			cancelFn()
-			s.cancel = nil
-		} else {
-			s.logger.Debug("unlock called without active lock context", zap.String("lock", s.cids))
-		}
-	}()
-
-	_, err = s.rdb.TxPipelined(ctx, func(pp redis.Pipeliner) error {
-		pp.ZRem(ctx, s.owners, s.clientID)
-		pp.ZRem(ctx, s.cids, s.clientID)
-		return nil
-	})
-	return errors.WithStack(err)
+func (s *semaphore) renew(ctx context.Context, token string) (bool, error) {
+	result, err := semaphoreRenewScript.Run(ctx, s.rdb.Client, []string{s.cids, s.owners}, token, s.ttl.Seconds()).Int64()
+	return result == 1, err
 }
-
-func (s *semaphore) refreshLock(ctx context.Context, cancel func()) {
-	defer cancel()
-	ticker := time.NewTicker(s.heartbeatInterval)
-	defer ticker.Stop()
-
-	logger := s.logger.With(zap.String("lock", s.cids))
-	defer logger.Debug("release key")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-
-		if err := s.rdb.ZAddXX(ctx, s.cids, redis.Z{
-			Member: s.clientID,
-			Score:  float64(gutils.Clock.GetUTCNow().Unix()),
-		}).Err(); err != nil {
-			if IsNil(err) {
-				logger.Warn("lock not exists")
-				return
-			}
-
-			logger.Error("refresh semaphore", zap.Error(err))
-			return
-		}
-
-		logger.Debug("succeed renew lock")
-	}
+func (s *semaphore) release(ctx context.Context, token string) (bool, error) {
+	result, err := semaphoreReleaseScript.Run(ctx, s.rdb.Client, []string{s.cids, s.owners}, token).Int64()
+	return result == 1, err
+}
+func (s *semaphore) Unlock(ctx context.Context) error {
+	return releaseAcquisition(ctx, s, s.active.Load())
 }

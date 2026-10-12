@@ -3,14 +3,12 @@ package redis
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	gutils "github.com/Laisky/go-utils/v5"
-	"github.com/Laisky/zap"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 )
@@ -55,87 +53,54 @@ func (h *oneShotGetNilHook) ProcessHook(next redis.ProcessHook) redis.ProcessHoo
 
 func TestUtils_NewMutex_lock(t *testing.T) {
 	rdb := redis.NewClient(testRedisOptions())
+	defer rdb.Close()
 	rtils := NewRedisUtils(rdb)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	mu, err := rtils.NewMutex("laisky")
+	name := "recursive-" + gutils.RandomStringWithLength(10)
+	mu, err := rtils.NewMutex(name, WithMutexBlockingLock(false))
 	if err != nil {
-		t.Fatalf("%+v", err)
+		t.Fatal(err)
 	}
-
-	ok, ctxLock, err := mu.Lock(ctx)
-	if err != nil {
-		t.Fatalf("%+v", err)
+	ok, lctx, err := mu.Lock(ctx)
+	if err != nil || !ok {
+		t.Fatal("initial lock failed")
 	}
-
-	if !ok {
-		t.Fatalf("not ok")
-	}
-
-	// RLock
-	var ctxLockR context.Context
+	references := []context.Context{lctx}
 	for i := 0; i < 5; i++ {
-		if ok, ctxLockR, err = mu.Lock(ctx); err != nil {
-			t.Fatalf("%+v", err)
-		} else if !ok {
-			t.Fatal("should ok")
+		ok, lctx, err = mu.Lock(lctx)
+		if err != nil || !ok {
+			t.Fatal("explicit recursive lock failed")
+		}
+		references = append(references, lctx)
+	}
+	contender, err := rtils.NewMutex(name, WithMutexBlockingLock(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(references) - 1; i > 0; i-- {
+		if err := mu.Unlock(references[i]); err != nil {
+			t.Fatal(err)
+		}
+		if references[0].Err() != nil {
+			t.Fatal("unbalanced recursive release revoked outer lease")
+		}
+		if ok, _, err := contender.Lock(ctx); err != nil || ok {
+			t.Fatal("recursive release exposed protected state")
 		}
 	}
-
-	if err = ctxLock.Err(); err != nil && err != context.Canceled {
-		t.Fatalf("%+v", err)
+	if err := mu.Unlock(references[0]); err != nil {
+		t.Fatal(err)
 	}
-
-	{
-		mu2, err := rtils.NewMutex("laisky")
-		if err != nil {
-			t.Fatalf("%+v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-		if ok, _, err = mu2.Lock(ctx); err != nil {
-			if err != context.DeadlineExceeded {
-				t.Fatalf("%+v", err)
-			}
-		} else if ok {
-			t.Fatalf("should be not ok")
-		}
-		cancel()
+	if references[0].Err() == nil {
+		t.Fatal("final release did not revoke lease")
 	}
-
-	time.Sleep(1 * time.Second)
-	if err = ctxLockR.Err(); err != nil {
-		t.Fatalf("lock released %+v", err)
+	ok, other, err := contender.Lock(ctx)
+	if err != nil || !ok {
+		t.Fatal("balanced release did not free lock")
 	}
-
-	// should released
-	time.Sleep(2 * time.Second)
-	if err = ctxLockR.Err(); err == nil {
-		t.Fatalf("lock released")
-	} else if err != context.DeadlineExceeded {
-		t.Fatalf("unlnown err %+v", err)
-	}
-
-	// wait redis lock exceeds ttl
-	time.Sleep(2 * time.Second)
-	{
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if ok, _, err = mu.Lock(ctx); err != nil {
-			t.Fatalf("%+v", err)
-		} else if !ok {
-			t.Fatalf("should be ok")
-		}
-
-		if err = mu.Unlock(ctx); err != nil {
-			t.Fatalf("%+v", err)
-		}
-
-		if err = ctxLock.Err(); err == nil {
-			t.Fatal("ctx should exit")
-		}
-		cancel()
+	if err := contender.Unlock(other); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -152,13 +117,14 @@ func TestUtils_NewMutex_unlock(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		if ok, _, err := mu.Lock(ctx); err != nil {
+		ok, lockCtx, err := mu.Lock(ctx)
+		if err != nil {
 			t.Fatalf("%+v", err)
 		} else if !ok {
 			t.Fatalf("not ok")
 		}
 
-		if err = mu.Unlock(ctx); err != nil {
+		if err = mu.Unlock(lockCtx); err != nil {
 			t.Fatalf("not ok")
 		}
 	}
@@ -230,10 +196,11 @@ func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
 		}
 
 		for pb.Next() {
-			if locked, _, err := mu.Lock(ctx); err != nil {
+			locked, lockCtx, err := mu.Lock(ctx)
+			if err != nil {
 				b.Fatalf("%+v", err)
 			} else if locked {
-				if err = mu.Unlock(ctx); err != nil {
+				if err = mu.Unlock(lockCtx); err != nil {
 					b.Fatalf("%+v", err)
 				}
 			}
@@ -243,45 +210,37 @@ func BenchmarkUtils_NewMutex_unlock(b *testing.B) {
 
 func TestUtils_NewMutex_race(t *testing.T) {
 	rdb := redis.NewClient(testRedisOptions())
+	defer rdb.Close()
 	rtils := NewRedisUtils(rdb)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	lockid := "laisky" + gutils.RandomStringWithLength(10)
-
-	var locked int32
+	name := "mutex-race-" + gutils.RandomStringWithLength(10)
+	mu, err := rtils.NewMutex(name, WithMutexSpinInterval(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active atomic.Int32
 	var pool errgroup.Group
-	for i := 0; i < 10; i++ {
-		mu, err := rtils.NewMutex(lockid,
-			WithMutexSpinInterval(time.Millisecond),
-		)
-		if err != nil {
-			t.Fatalf("%+v", err)
-		}
-
+	for i := 0; i < 8; i++ {
 		pool.Go(func() error {
-			if _, _, err := mu.Lock(ctx); err != nil && err != context.DeadlineExceeded {
-				logger.Panic("lock", zap.Error(err))
-				return nil
+			ok, lctx, err := mu.Lock(ctx)
+			if err != nil {
+				return err
 			}
-
-			if got := atomic.AddInt32(&locked, 1); got > 1 {
-				logger.Panic("locked ", zap.Int32("got", got))
+			if !ok {
+				return fmt.Errorf("missing acquisition")
 			}
-
-			if got := atomic.AddInt32(&locked, -1); got < 0 {
-				logger.Panic("locked ", zap.Int32("got", got))
+			entered := active.Add(1)
+			time.Sleep(time.Millisecond)
+			active.Add(-1)
+			unlockErr := mu.Unlock(lctx)
+			if entered > 1 {
+				return fmt.Errorf("simultaneous critical sections=%d", entered)
 			}
-
-			time.Sleep(time.Duration(100+rand.Intn(300)) * time.Millisecond)
-			if err := mu.Unlock(ctx); err != nil {
-				t.Fatalf("%+v", err)
-			}
-
-			return nil
+			return unlockErr
 		})
 	}
-
-	_ = pool.Wait()
+	if err := pool.Wait(); err != nil {
+		t.Fatal(err)
+	}
 }

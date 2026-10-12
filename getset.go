@@ -6,7 +6,6 @@ package redis
 
 import (
 	"context"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -141,15 +140,16 @@ func (u *Utils) LPopKeysBlocking(ctx context.Context, keys ...string) (key, val 
 
 // RPush options
 type rpushOption struct {
-	maxLength  int64
-	trimSize   int64
-	forceCheck bool
+	maxLength   int64
+	trimSize    int64
+	forceCheck  bool
+	trimSizeSet bool
 }
 
 // RPushOptionFunc optional arguments for RPush
 type RPushOptionFunc func(*rpushOption) error
 
-// WithMaxLength sets the maximum list length before truncating
+// WithMaxLength sets the hard post-append list length limit.
 func (u *Utils) WithMaxLength(maxLength int64) RPushOptionFunc {
 	return func(opt *rpushOption) error {
 		if maxLength <= 0 {
@@ -167,11 +167,12 @@ func (u *Utils) WithTrimSize(size int64) RPushOptionFunc {
 			return errors.New("trimSize must be positive")
 		}
 		opt.trimSize = size
+		opt.trimSizeSet = true
 		return nil
 	}
 }
 
-// WithForceCheck forces a length check regardless of random chance
+// WithForceCheck is retained for compatibility; every RPush now enforces its limit.
 func (u *Utils) WithForceCheck() RPushOptionFunc {
 	return func(opt *rpushOption) error {
 		opt.forceCheck = true
@@ -197,27 +198,23 @@ func (u *Utils) RPush(ctx context.Context, key string, payloads []interface{}, o
 		}
 	}
 
-	var length int64
-	if opt.forceCheck || rand.Intn(100) == 0 {
-		if length, err = u.Client.LLen(ctx, key).Result(); err != nil {
-			return errors.Wrapf(err, "get len `%s`", key)
-		}
-
-		if length >= opt.maxLength {
-			if err = u.Client.LTrim(ctx, key, -opt.trimSize, -1).Err(); err != nil {
-				u.logger.Error("trim", zap.String("key", key), zap.Error(err))
-			}
-			u.logger.Info("trim array",
-				zap.String("key", key),
-				zap.Int64("length", length),
-				zap.Int64("max_length", opt.maxLength),
-				zap.Int64("trim_size", opt.trimSize))
-		}
+	if opt.maxLength > (1<<53)-1 {
+		return errors.New("maxLength exceeds exact Redis script range")
 	}
-
-	if len(payloads) == 0 {
-		return nil
+	if opt.trimSize > opt.maxLength {
+		if opt.trimSizeSet {
+			return errors.New("trimSize must not exceed maxLength")
+		}
+		opt.trimSize = opt.maxLength
 	}
-
-	return u.Client.RPush(ctx, key, payloads...).Err()
+	if int64(len(payloads)) > opt.maxLength {
+		return errors.New("payload batch exceeds maxLength")
+	}
+	args := make([]interface{}, 0, len(payloads)+2)
+	args = append(args, opt.maxLength, opt.trimSize)
+	args = append(args, payloads...)
+	if _, err = boundedRPush.Run(ctx, u.Client, []string{key}, args...).Result(); err != nil {
+		return errors.Wrap(err, "append bounded Redis list")
+	}
+	return nil
 }
