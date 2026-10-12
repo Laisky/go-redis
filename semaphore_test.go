@@ -2,11 +2,14 @@ package redis
 
 import (
 	"context"
+	"fmt"
+	"github.com/Laisky/zap"
+	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	glog "github.com/Laisky/go-utils/v5/log"
-	"github.com/Laisky/zap"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,7 +26,12 @@ func TestSemaphore_Lock(t *testing.T) {
 	}
 
 	// client 1
-	if locked1, _, err := sema1.Lock(ctx); err != nil {
+	locked1, lease1, err := sema1.Lock(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sema1.Unlock(lease1)
+	if locked1, _, err := locked1, lease1, err; err != nil {
 		t.Fatalf("%+v", err)
 	} else if !locked1 {
 		t.Fatal("should locked")
@@ -35,7 +43,11 @@ func TestSemaphore_Lock(t *testing.T) {
 	}
 
 	// client 2
-	if locked2, _, err := sema2.Lock(ctx); err != nil {
+	locked2, lease2, err := sema2.Lock(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locked2, _, err := locked2, lease2, err; err != nil {
 		t.Fatalf("%+v", err)
 	} else if !locked2 {
 		t.Fatal("should locked")
@@ -57,7 +69,7 @@ func TestSemaphore_Lock(t *testing.T) {
 	}
 	cancel3()
 
-	if err = sema2.Unlock(ctx); err != nil {
+	if err = sema2.Unlock(lease2); err != nil {
 		t.Fatal("should not locked")
 	}
 
@@ -69,33 +81,47 @@ func TestSemaphore_Lock(t *testing.T) {
 }
 
 func TestSemaphore_race(t *testing.T) {
-	run := func(ctx context.Context, s Semaphore) {
-		if locked, _, err := s.Lock(ctx); err != nil {
-			t.Fatalf("%+v", err)
-		} else if locked {
-			if err = s.Unlock(ctx); err != nil {
-				t.Fatalf("%+v", err)
-			}
-		}
-	}
-
-	for i := 0; i < 10; i++ {
-		go func() {
+	for _, limit := range []int{1, 2, 4} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			rdb := redis.NewClient(testRedisOptions())
+			defer rdb.Close()
 			rtils := NewRedisUtils(rdb)
-
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-
-			sema, err := rtils.NewSemaphore("laisky", 2)
+			sema, err := rtils.NewSemaphore("semaphore-race-"+uuid.NewString(), limit, WithSemaphoreSpinInterval(time.Millisecond))
 			if err != nil {
-				glog.Shared.Panic("new semaphore", zap.Error(err))
+				t.Fatal(err)
 			}
-
-			for i := 0; i < 1000; i++ {
-				run(ctx, sema)
+			var active atomic.Int32
+			var group errgroup.Group
+			for worker := 0; worker < 8; worker++ {
+				group.Go(func() error {
+					for i := 0; i < 8; i++ {
+						locked, lctx, err := sema.Lock(ctx)
+						if err != nil {
+							return err
+						}
+						if !locked {
+							return fmt.Errorf("missing permit")
+						}
+						entered := active.Add(1)
+						time.Sleep(time.Millisecond)
+						active.Add(-1)
+						releaseErr := sema.Unlock(lctx)
+						if entered > int32(limit) {
+							return fmt.Errorf("active holders=%d limit=%d", entered, limit)
+						}
+						if releaseErr != nil {
+							return releaseErr
+						}
+					}
+					return nil
+				})
 			}
-		}()
+			if err := group.Wait(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -114,13 +140,15 @@ func BenchmarkSemaphore(b *testing.B) {
 		}
 
 		for pb.Next() {
-			if locked, _, err := sema.Lock(ctx); err != nil {
+			locked, lockCtx, err := sema.Lock(ctx)
+			if err != nil {
 				logger.Panic("lock", zap.Error(err))
 				return
 			} else if locked {
 				b.Log(locked)
-				// TODO
-				// ...
+				if err := sema.Unlock(lockCtx); err != nil {
+					b.Fatal(err)
+				}
 			}
 		}
 	})
